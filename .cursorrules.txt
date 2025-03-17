@@ -1,0 +1,281 @@
+CURSOR CODING RULES:
+
+I. General Coding Standards
+
+1. Consistent Formatting:
+
+• Enforce uniform code formatting using tools such as Prettier and ESLint (auto-format on save).
+
+• Example: Configure a .prettierrc file and enable ESLint’s auto-fix feature in your IDE.
+
+2. Effective Whitespace Usage:
+
+• Use whitespace to separate logical blocks (e.g., between functions, loops, and conditionals).
+
+• Example: Insert blank lines between function definitions to visually group related logic.
+
+3. Line Length Limit:
+
+• Adhere to a maximum line length (e.g., 80–120 characters).
+
+• Example: Set the printWidth option in Prettier to 80 or 120 characters.
+
+4. Self-Documenting Code and Clear Intent:
+
+• Use descriptive, context-rich names for functions, variables, and parameters to communicate their purpose.
+
+• Include inline comments and JSDoc annotations to explain non-obvious logic and the overall intent of code sections.
+
+• When functions require multiple parameters, consider using parameter objects to group related values.
+
+• Example:
+
+/**
+ * Creates a user profile with the specified options.
+ *
+ * @param options - An object containing user details.
+ * @returns The created user profile.
+ */
+function createUserProfile(options: { username: string; email: string; isActive?: boolean }): UserProfile {
+  // Validate and process options here.
+}
+
+
+
+
+II. TypeScript Best Practices
+
+5. Strict TypeScript Mode:
+
+• Always enable TypeScript’s strict mode.
+
+• Example: Set "strict": true in your tsconfig.json.
+
+6. Explicit Typing:
+
+• Use explicit types for function parameters, return types, and complex data structures.
+
+7. Interfaces and Type Aliases:
+
+• Define object shapes using interfaces or type aliases.
+
+• Example:
+
+interface User {
+  id: number;
+  name: string;
+}
+
+
+8. Generics:
+
+• Utilize generics to create reusable components and functions.
+
+9. Discriminated Unions:
+
+• Use discriminated unions to manage varied data states.
+
+10. Immutability:
+
+• Use the readonly modifier and favor immutable data practices.
+
+11. Null and Undefined Handling:
+
+• Explicitly check and handle null or undefined values using optional chaining and nullish coalescing.
+
+
+
+III. Functional & Object-Oriented Programming and Asynchronous Guidelines
+
+12. Pure Functions and Function Composition:
+
+• Prefer pure functions and compose them to build complex behavior while avoiding side effects.
+
+13. Balanced Object-Oriented Practices:
+
+• Apply object-oriented principles (e.g., encapsulation, abstraction) when they offer clear benefits alongside functional approaches.
+
+14. Asynchronous Programming Best Practices:
+
+• Use async/await consistently for asynchronous operations and manage cancellations (using tokens or abort controllers) where applicable.
+
+• Example:
+
+async function fetchData(url: string): Promise<Data> {
+  const response = await fetch(url);
+  return response.json();
+}
+
+
+
+
+IV. Error Handling and Testing
+
+15. Explicit Error Handling:
+
+• Use try-catch blocks, promise error handling, or dedicated utilities to manage errors.
+
+16. Custom Error Types:
+
+• Define and use custom error types for more informative error handling.
+
+• Example:
+
+class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotFoundError';
+  }
+}
+
+
+17. Comprehensive Unit Testing:
+
+• Write unit tests for all functions and components to validate behavior.
+
+18. Test-Driven Development (TDD):
+
+• Consider using TDD to guide development and ensure high test coverage.
+
+19. Mocking and Stubbing:
+
+• Use mocks and stubs to isolate units during testing and simulate dependencies.
+
+
+
+V. Performance, Security, and Documentation
+
+20. Performance Optimization:
+
+• Optimize code by using efficient algorithms, minimizing re-renders, and reducing unnecessary network requests.
+
+21. Profiling and Benchmarking:
+
+• Employ profiling tools to identify and address performance bottlenecks.
+
+22. Security Best Practices:
+
+• Implement input validation, output encoding, and safeguards against injection attacks.
+
+23. Dependency Audits:
+
+• Regularly review and update dependencies to address known security vulnerabilities.
+
+24. In-Code Documentation:
+
+• Write concise comments to explain complex logic and non-obvious implementation details.
+
+25. Automated Documentation Generation:
+
+• Use tools like JSDoc to generate and maintain up-to-date documentation.
+
+
+
+VI. WebRTC Specific Rules
+
+26. Signaling Protocol Abstraction:
+
+• Abstract the signaling protocol behind a well-defined interface.
+
+27. SDP Handling:
+
+• Implement robust SDP handling, including session negotiation, modification, and error handling.
+
+• Validate and sanitize SDP data before use.
+
+28. ICE Management:
+
+• Implement proper ICE candidate gathering, handling, and exchange.
+
+• Monitor ICE connection states and handle failures gracefully.
+
+29. Media Stream Handling:
+
+• Use clear abstractions for managing media streams (audio and video tracks).
+
+• Handle track events and media stream errors appropriately.
+
+30. Peer Connection Lifecycle Management:
+
+• Define a clear lifecycle for RTCPeerConnection objects, covering creation, connection establishment, data/media exchange, and proper closure to prevent resource leaks.
+
+31. Error Handling and Fallbacks (WebRTC):
+
+• Implement comprehensive error handling for all WebRTC operations and provide graceful fallbacks or user notifications when errors occur.
+
+32. WebRTC Security Considerations:
+
+• Enforce secure signaling and use DTLS for secure media transmission.
+
+
+
+VII. AI Integration Specific Rules
+
+33. AI Model Abstraction:
+
+• Abstract AI models and their inference logic behind well-defined interfaces.
+
+34. Data Preprocessing and Postprocessing:
+
+• Implement clear and consistent pipelines for preparing data for AI models and for handling model output.
+
+35. Asynchronous AI Operations Management:
+
+• Manage asynchronous AI operations carefully using promises, async/await, and cancellation tokens.
+
+36. Real-time AI Processing:
+
+• Optimize AI model inference and data transfer to minimize latency in real-time scenarios.
+
+37. Data Privacy and Security (AI):
+
+• Ensure data privacy through techniques like federated learning or differential privacy where applicable.
+
+38. AI Model Performance Monitoring:
+
+• Implement mechanisms to monitor AI model performance, tracking metrics such as accuracy, latency, and resource usage.
+
+
+
+VIII. Combined WebRTC and AI Integration Rules
+
+39. Synchronized Data and Media Handling:
+
+• Ensure that data from WebRTC and AI components are synchronized and processed in the correct order.
+
+40. Efficient Data Transfer:
+
+• Optimize data transfer between WebRTC and AI components to minimize latency and bandwidth usage.
+
+41. Resource Management:
+
+• Manage system resources carefully when combining WebRTC and AI functionalities, optimizing for constraints.
+
+42. Scalability Considerations:
+
+• Design the application with scalability in mind to accommodate growth in data and user load.
+
+
+
+IX. Cursor-Specific Considerations
+
+43. Cursor’s AI Integration:
+
+• Leverage Cursor’s built-in AI capabilities for code generation, debugging, and optimization in both WebRTC and AI tasks.
+
+44. Cursor’s WebRTC Tooling:
+
+• Utilize any dedicated Cursor tooling or extensions for WebRTC development to streamline coding and debugging.
+
+45. Customizability and Explainability:
+
+• Allow developers to customize the rule set and provide clear, actionable explanations for any violations.
+
+Final Remarks
+
+• Template Examples: Including code snippets (as shown above) aids in clarity and provides practical references.
+
+• Categorization: Grouping rules into high-level sections improves readability and helps onboard new team members.
+
+• Regular Updates: Periodically review and update these rules to ensure they remain aligned with evolving best practices and technology trends.
+
