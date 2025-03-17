@@ -24,6 +24,67 @@ export const allAttendees = new Map<string, string>(); // attendeeId -> language
 let connectionInterval: number | null = null;
 const renewalTimers = new Map<string, number>();
 
+// Track temporary audio elements for guide playback
+const guideAudioElements = new Map<string, HTMLAudioElement>();
+
+/**
+ * Creates and plays an audio element for the guide when no attendees are connected.
+ * @param stream The MediaStream containing audio to play
+ * @param language The language of the audio stream
+ */
+function playAudioForGuide(stream: MediaStream, language?: string): void {
+  console.log("Playing audio for guide (no attendees connected)");
+  
+  // Clean up any existing audio element for this language
+  if (language && guideAudioElements.has(language)) {
+    const existingAudio = guideAudioElements.get(language);
+    if (existingAudio) {
+      existingAudio.pause();
+      existingAudio.srcObject = null;
+      existingAudio.remove();
+      guideAudioElements.delete(language);
+    }
+  }
+  
+  // Create a new audio element
+  const audioEl = document.createElement('audio');
+  audioEl.autoplay = true;
+  audioEl.muted = false;
+  audioEl.srcObject = stream;
+  
+  // Add to DOM (hidden)
+  audioEl.style.display = 'none';
+  document.body.appendChild(audioEl);
+  
+  // Store reference if language is provided
+  if (language) {
+    guideAudioElements.set(language, audioEl);
+    
+    // Clean up when an attendee joins this language
+    const checkForAttendees = setInterval(() => {
+      const connections = attendeeConnectionsByLanguage.get(language);
+      if (connections && connections.size > 0) {
+        console.log(`Attendee joined ${language}, stopping guide audio playback`);
+        audioEl.pause();
+        audioEl.srcObject = null;
+        audioEl.remove();
+        guideAudioElements.delete(language);
+        clearInterval(checkForAttendees);
+      }
+    }, 2000);
+  }
+  
+  // Clean up when audio ends
+  audioEl.addEventListener('ended', () => {
+    audioEl.remove();
+    if (language) {
+      guideAudioElements.delete(language);
+    }
+  });
+  
+  console.log("Guide audio playback started");
+}
+
 /**
  /**
  * Updates the overall list of attendees from our tracking maps.
@@ -444,10 +505,12 @@ function scheduleKeyRenewal(language: string) {
     // Set up track handling - when we receive audio from OpenAI, forward to all attendees
     openaiPC.ontrack = (e) => {
       console.log(`Received track from OpenAI for ${language}:`, e.track.kind);
-      
-      // Get all attendee connections for this language
+
+      // Get attendee connections for this language
       const connections = attendeeConnectionsByLanguage.get(language);
-      if (connections) {
+
+      if (connections && connections.size > 0) {
+        // Forward audio to attendees if there are any
         for (const conn of connections) {
           try {
             // Add the track to each attendee's connection
@@ -457,6 +520,10 @@ function scheduleKeyRenewal(language: string) {
             console.error(`Error forwarding track to attendee ${conn.id}:`, error);
           }
         }
+      } else {
+        // Play audio for guide if no attendees
+        console.log("No attendees connected, playing audio for guide");
+        playAudioForGuide(e.streams[0], language);
       }
     };
 
@@ -607,6 +674,7 @@ async function pollForAttendeeAnswers(
   setAttendees: (attendees: string[]) => void
 ): Promise<void> {
   console.log(`Polling for attendee answers for ${language}...`);
+
   try {
     const answersResponse = await fetch(
       `/api/tour/answer?language=${encodeURIComponent(language)}&tourId=${encodeURIComponent(tourId)}`, 
@@ -615,6 +683,7 @@ async function pollForAttendeeAnswers(
         credentials: "include" 
       }
     );
+
     
     if (!answersResponse.ok) {
       console.error(`Failed to poll for answers: ${answersResponse.status} ${answersResponse.statusText}`);
@@ -734,9 +803,23 @@ export async function initGuideWebRTC(
     // Create the initial attendee offer for this language
     await createAttendeeConnection(language, tourId, openaiConnection);
     
-    // Begin polling for attendee answers
-    await pollForAttendeeAnswers(language, tourId, setAttendees);
-    const pollInterval = setInterval(() => pollForAttendeeAnswers(language, tourId, setAttendees), 5000);
+    // Begin polling for attendee answers - only if attendees are present
+    const attendeeCount = attendeeConnectionsByLanguage.get(language)?.size || 0;
+    if (attendeeCount > 0) {
+      // Only poll if there are actually attendees
+      await pollForAttendeeAnswers(language, tourId, setAttendees);
+    }
+    
+    // Set up polling interval that checks attendee count before polling
+    const pollInterval = setInterval(() => {
+      const currentAttendeeCount = attendeeConnectionsByLanguage.get(language)?.size || 0;
+      if (currentAttendeeCount > 0) {
+        // Only poll if there are actually attendees
+        pollForAttendeeAnswers(language, tourId, setAttendees);
+      } else {
+        console.log(`No attendees connected for ${language}, skipping poll`);
+      }
+    }, 5000);
     
     console.log("WebRTC initialization completed successfully for language:", language);
 
@@ -785,6 +868,16 @@ async function reconnect(
         attendeeConnectionsByLanguage.delete(language);
         console.log(`Attendee connections closed for ${language}.`);
       }
+      
+      // Clean up any guide audio elements for this language
+      if (guideAudioElements.has(language)) {
+        console.log(`Cleaning up guide audio element for ${language}`);
+        const audioEl = guideAudioElements.get(language)!;
+        audioEl.pause();
+        audioEl.srcObject = null;
+        audioEl.remove();
+        guideAudioElements.delete(language);
+      }
 
       // Update attendees list in UI - Call updateAttendeesList with setAttendees
       updateAttendeesList(setAttendees);
@@ -830,6 +923,15 @@ export function cleanupGuideWebRTC() {
     window.clearInterval(connectionInterval);
     connectionInterval = null;
   }
+  
+  // Clean up any guide audio elements
+  for (const [language, audioEl] of guideAudioElements.entries()) {
+    console.log(`Cleaning up guide audio element for ${language}`);
+    audioEl.pause();
+    audioEl.srcObject = null;
+    audioEl.remove();
+  }
+  guideAudioElements.clear();
   
   // Close all OpenAI connections
   for (const conn of openaiConnections.values()) {
