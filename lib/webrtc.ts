@@ -151,7 +151,7 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
       }
       
       dc.onclose = () => {
-        console.log("Data channel closed")
+        console.log("Data channel closed", dc.readyState)
       }
       
       dc.onerror = (error) => {

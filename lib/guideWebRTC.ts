@@ -268,7 +268,7 @@ function scheduleKeyRenewal(language: string) {
         urls: 'turn:192.168.240.1:3478',
         username: 'username1',
         credential: 'password1'
-      },
+      },      
       {
         urls: 'turns:192.168.240.1:443',
         username: 'username1',
@@ -281,6 +281,19 @@ function scheduleKeyRenewal(language: string) {
       { urls: ["stun:stun4.l.google.com:19302"] }
     ],
   });
+
+  openaiPC.onicecandidate = (event) => {
+    if (event.candidate) {
+      console.log('OpenAI ICE Candidate:', event.candidate.candidate);
+      if (event.candidate.candidate.includes('relay')) {
+        console.log('TURN server is being used for OpenAI');
+      }
+    }
+  };
+
+  openaiPC.oniceconnectionstatechange = () => {
+    console.log('OpenAI ICE Connection State:', openaiPC.iceConnectionState);
+  };
 
   console.log('OpenAI using ICE servers:', openaiPC.getConfiguration().iceServers);
 
@@ -342,7 +355,7 @@ function scheduleKeyRenewal(language: string) {
   };
 
   openaiDC.onclose = () => {
-    console.log(`OpenAI data channel closed for ${language}`);
+    console.log(`OpenAI data channel closed for ${language}`, openaiDC.readyState);
     if (connectionInterval) {
       window.clearInterval(connectionInterval);
       connectionInterval = null;
@@ -365,35 +378,10 @@ function scheduleKeyRenewal(language: string) {
     const realtimeEvent = JSON.parse(e.data);
     console.log(`OpenAI event received for ${language}:`, realtimeEvent.type);
     
-    if (realtimeEvent.type === "response.text.delta" && realtimeEvent.delta) {
-      // Update translation incrementally
-      const currentTranslation = document.querySelector(".text-lg")?.textContent || "Waiting for translation...";
-      const updatedTranslation = currentTranslation === "Waiting for translation..."
-        ? realtimeEvent.delta
-        : currentTranslation + realtimeEvent.delta;
-      
-      setTranslation(updatedTranslation);
-      
-      // Forward delta update to all attendees of this language
-      forwardTranslationToAttendees(language, {
-        type: "translation.update",
-        text: updatedTranslation
-      });
-    } else if (realtimeEvent.type === "response.text.done" && realtimeEvent.text) {
-      // Final translation is complete
-      setTranslation(realtimeEvent.text);
-      
-      // Forward completed translation to all attendees of this language
-      forwardTranslationToAttendees(language, {
-        type: "translation.complete",
-        text: realtimeEvent.text
-      });
-      
-      // Store the completed translation in Redis
-      storeTranslationInRedis(tourId, language, realtimeEvent.text);
-    }
+    // ✅ No text event handling remains
+    // Add audio-related event handling here if needed
   };
-
+  
   // Create and send offer to OpenAI
   console.log('Creating OpenAI offer...');
   const openaiOffer = await openaiPC.createOffer({
@@ -497,6 +485,8 @@ async function createAttendeeConnection(
         username: 'username1',
         credential: 'password1'
       },
+
+      
       {
         urls: 'turns:192.168.240.1:443',
         username: 'username1',
@@ -509,6 +499,23 @@ async function createAttendeeConnection(
       { urls: ["stun:stun4.l.google.com:19302"] }
     ],
   });
+
+
+  attendeePC.onicecandidate = (event) => {
+    if (event.candidate) {
+      console.log('Attendee ICE Candidate:', event.candidate.candidate);
+      if (event.candidate.candidate.includes('relay')) {
+        console.log('TURN server is being used for attendee');
+      }
+    }
+  };
+
+  
+  attendeePC.oniceconnectionstatechange = () => {
+    console.log('Attendee ICE Connection State:', attendeePC.iceConnectionState);
+  };
+
+  
   console.log('Attendee connection using ICE servers:', attendeePC.getConfiguration().iceServers);
 
   // Create a data channel for sending translated audio/text to attendees
@@ -543,6 +550,8 @@ async function createAttendeeConnection(
   const offerKey = `tour:${tourId}:${language}`;
   console.log(`Storing attendee offer in Redis with key: ${offerKey}`);
   
+  console.log('Storing attendee offer in Redis:', attendeePC.localDescription);
+
   try {
     console.log('Sending attendee offer to /api/tour/offer...');
     const tourResponse = await fetch("/api/tour/offer", {
