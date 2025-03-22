@@ -28,7 +28,7 @@ export default function GuidePage() {
   const [error, setError] = useState<string | null>(null);
   const [isTourActive, setIsTourActive] = useState<boolean>(false);
   const [isTourEnding, setIsTourEnding] = useState<boolean>(false); // Track if the tour is intentionally ending
-  const [tourId, setTourCode] = useState<string | null>(null); // State for tour code
+  const [tourCode, setTourCode] = useState<string | null>(null); // State for tour code
   const [tourCreated, setTourCreated] = useState<boolean>(false); // State to track if tour is created
   const [copySuccess, setCopySuccess] = useState<string>("");
 
@@ -64,7 +64,7 @@ export default function GuidePage() {
       
       const tourData = await response.json()
       console.log("Tour started successfully:", tourData)
-      setTourCode(tourData.tourId)
+      setTourCode(tourData.tourCode)
       setTourCreated(true) // Set tourCreated to true
 
       // Initialize WebRTC only after tour has successfully started.
@@ -109,9 +109,9 @@ export default function GuidePage() {
 
   // Copy the tour code to clipboard
   const handleCopyTourCode = async () => {
-    if (tourId) {
+    if (tourCode) {
       try {
-        await navigator.clipboard.writeText(tourId)
+        await navigator.clipboard.writeText(tourCode)
         setCopySuccess("Tour code copied!")
         setTimeout(() => setCopySuccess(""), 3000)
       } catch (err) {
@@ -177,7 +177,7 @@ export default function GuidePage() {
               disabled={isTourActive} // disable when tour is active
             />
              {/* Tour Code Display */}
-            {tourCreated && tourId && (
+            {tourCreated && tourCode && (
               <div className="flex flex-col items-center mb-6">
                 <Alert variant="success" className="mb-3">
                   <AlertCircle className="h-4 w-4 mr-2" />
@@ -189,7 +189,7 @@ export default function GuidePage() {
                       className="inline-flex items-center ml-2 text-sm font-semibold hover:text-blue-600"
                     >
                       <Copy className="h-4 w-4 mr-1" />
-                      {tourId}
+                      {tourCode}
                     </button>
                     {copySuccess && <span className="text-green-600 ml-2">{copySuccess}</span>}
                   </AlertDescription>

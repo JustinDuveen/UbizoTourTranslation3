@@ -2,14 +2,47 @@
 const connections = new Map<string, {
     pc: RTCPeerConnection,
     audioEl: HTMLAudioElement,
-    tourId: string, // Store tourId here
+    tourCode: string, // Store tourCode here
     keyRefreshTimer: NodeJS.Timeout | null; // Add to store timer ID
 }>()
 
-export async function initWebRTC(setTranslation: (translation: string) => void, language: string, tourId: string) {
+export async function initWebRTC(setTranslation: (translation: string) => void, language: string, tourCode: string) {
   try {
+    const response = await fetch(`/api/tour/join?tourCode=${tourCode}&language=${language}`);
+    
+    if (!response.ok) {
+      throw new Error('Failed to join tour');
+    }
+    
+    let { offer, tourId } = await response.json();
+    
+    // Store the tourId for later use
+    localStorage.setItem('currentTourId', tourId);
+
+    if (!offer) {
+      setTranslation("Waiting for translation data...");
+      console.log("No offer received from join response. Entering polling mode for translation data.");
+      while (!offer) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        try {
+          const pollResponse = await fetch(`/api/tour/join?tourCode=${tourCode}&language=${language}`, { credentials: "include" });
+          if (pollResponse.ok) {
+            const pollData = await pollResponse.json();
+            if (pollData.offer) {
+              offer = pollData.offer;
+              console.log("Translation data received via polling, proceeding with WebRTC setup.");
+            } else {
+              console.log("Still waiting for translation data...");
+            }
+          }
+        } catch (err) {
+          console.error("Error polling for translation data:", err);
+        }
+      }
+    }
+    
     console.log("=== INITIALIZING ATTENDEE WEBRTC ===")
-    console.log(`Language selected: ${language}, Tour Code: ${tourId}`)
+    console.log(`Language selected: ${language}, Tour Code: ${tourCode}`)
 
     // Fetch ephemeral key from /api/session
     const sessionResponse = await fetch("/api/session", {
@@ -59,12 +92,12 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
     const pc = new RTCPeerConnection({
       iceServers: [
         {
-          urls: 'turn:192.168.240.1:3478', // Replace with your TURN server IP
+          urls: 'turn:192.168.245.82:3478', // Replace with your TURN server IP
           username: 'username1', // Use a valid username from your turnserver.conf
           credential: 'password1' // Use the corresponding password
         },
         {
-          urls: 'turns:192.168.240.1:443', // Replace with your TURN server IP (TURN over TLS)
+          urls: 'turn:192.168.245.82:443', // Replace with your TURN server IP (TURN over TLS)
           username: 'username1', // Use a valid username from your turnserver.conf
           credential: 'password1' // Use the corresponding password
         },
@@ -170,6 +203,29 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
           // Handle complete translation
           else if (realtimeEvent.type === "translation.complete" && realtimeEvent.text) {
             setTranslation(realtimeEvent.text)
+          } else if (realtimeEvent.type === "audio") {
+            // Handle audio data
+            try {
+              let audioBuffer = realtimeEvent.audio;
+
+              if (audioBuffer) {
+                // Convert the audioBuffer to an ArrayBuffer if it's not already
+                if (typeof audioBuffer === 'object' && audioBuffer !== null && !(audioBuffer instanceof ArrayBuffer)) {
+                  audioBuffer = new Uint8Array(Object.values(audioBuffer)).buffer;
+                }
+
+                // Play the audio
+                const audioContext = new AudioContext();
+                audioContext.decodeAudioData(audioBuffer, function(buffer) {
+                  const source = audioContext.createBufferSource();
+                  source.buffer = buffer;
+                  source.connect(audioContext.destination);
+                  source.start(0);
+                }, (e) => { console.error("Error decoding audio data", e); });
+              }
+            } catch (error) {
+              console.error("Error handling audio data:", error);
+            }
           }
         } catch (error) {
           console.error("Error parsing data channel message:", error)
@@ -190,11 +246,11 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
       console.log(`Connection state: ${pc.connectionState}`)
     }
 
-    // Get the guide's offer from the server, including tourId
+    // Get the guide's offer from the server, including tourCode
     console.log("Fetching guide's offer with tour Code and language...")
     try {
       const offerResponse = await fetch(
-        `/api/tour/join?tourId=${encodeURIComponent(tourId)}&language=${encodeURIComponent(language)}`,
+        `/api/tour/join?tourCode=${encodeURIComponent(tourCode)}&language=${encodeURIComponent(language)}`,
         {
           credentials: "include",
         }
@@ -223,6 +279,14 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
       
       // Send the answer back to the guide
       console.log("Sending answer to guide...")
+      // Get the tourId that was stored during initWebRTC
+      const answerTourId = localStorage.getItem('currentTourId');
+      
+      if (!answerTourId) {
+        console.error('No tourId found when sending answer');
+        throw new Error('No tourId found when sending answer');
+      }
+      
       const answerResponse = await fetch("/api/tour/answer", {
         method: "POST",
         headers: {
@@ -230,7 +294,8 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
         },
         body: JSON.stringify({
           language,
-          answer: pc.localDescription
+          answer: pc.localDescription,
+          tourId: answerTourId
         }),
         credentials: "include"
       })
@@ -247,28 +312,49 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
       pc.onicecandidate = async (event) => {
         if (event.candidate) {
           try {
-            await fetch("/api/tour/ice-candidate", { // Updated endpoint to /api/tour/ice-candidate
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                tourId,         // Include tourId
-                language,
-                candidate: event.candidate
-              }),
-              credentials: "include"
-            })
+            await sendIceCandidate(event.candidate, language);
           } catch (error) {
             console.error("Failed to send ICE candidate:", error)
           }
         }
       }
       
+      // Function to send ICE candidates to the server
+      async function sendIceCandidate(candidate: RTCIceCandidate, language: string) {
+        // Get the tourId that was stored during initWebRTC
+        const tourId = localStorage.getItem('currentTourId');
+        
+        if (!tourId) {
+          console.error('No tourId found when sending ICE candidate');
+          return;
+        }
+        
+        await fetch('/api/tour/attendee-ice', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            candidate,
+            language,
+            tourId
+          }),
+          credentials: "include"
+        });
+      }
+      
       // Get ICE candidates from the guide
       const getGuideIceCandidates = async () => {
         try {
-          const iceResponse = await fetch(`/api/tour/guide-ice?language=${encodeURIComponent(language)}`, {
+          // Get the tourId that was stored during initWebRTC
+          const tourId = localStorage.getItem('currentTourId')
+          
+          if (!tourId) {
+            console.error('No tourId found when getting guide ICE candidates')
+            return
+          }
+          
+          const iceResponse = await fetch(`/api/tour/guide-ice?language=${encodeURIComponent(language)}&tourId=${encodeURIComponent(tourId)}`, {
             credentials: "include"
           })
           
@@ -296,8 +382,8 @@ export async function initWebRTC(setTranslation: (translation: string) => void, 
         }
       }, 2000)
       
-      // Store connection info, including tourId and timer ID
-      connections.set(language, { pc, audioEl, tourId, keyRefreshTimer: keyRefreshTimerId }); // Store timer ID in connections map
+      // Store connection info, including tourCode and timer ID
+      connections.set(language, { pc, audioEl, tourCode, keyRefreshTimer: keyRefreshTimerId }); // Store timer ID in connections map
       console.log("WebRTC initialization completed successfully")
     } catch (error) {
       console.error("Error in WebRTC offer/answer exchange:", error)
@@ -313,10 +399,10 @@ async function reconnect(setTranslation: (translation: string) => void, language
   try {
     const connection = connections.get(language);
     if (connection) {
-      const tourId = connection.tourId; // Retrieve tourId for reconnection
+      const tourCode = connection.tourCode; // Retrieve tourCode for reconnection
       connection.pc.close();
       connections.delete(language);
-      await initWebRTC(setTranslation, language, tourId); // Pass tourId to initWebRTC
+      await initWebRTC(setTranslation, language, tourCode); // Pass tourCode to initWebRTC
     }
   } catch (error) {
     console.error(`Reconnection failed for ${language}:`, error)

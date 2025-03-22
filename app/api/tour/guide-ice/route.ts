@@ -15,33 +15,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Get the language from query parameters
+    // Get the language and tourId from query parameters
     const { searchParams } = new URL(request.url)
     const language = searchParams.get("language")
-
-    if (!language) {
-      return NextResponse.json({ error: "Missing language parameter" }, { status: 400 })
+    const tourId = searchParams.get("tourId")
+    
+    if (!language || !tourId) {
+      return NextResponse.json({ error: "Missing parameters" }, { status: 400 })
     }
 
     // Get Redis client
     const redis = await getRedisClient()
     
-    // Find active tours with offers for this language
-    const keys = await redis.keys("tour:*:offer:*")
-    const offerKeys = keys.filter((key: string) => key.endsWith(`:${language}`))
-    
-    if (offerKeys.length === 0) {
-      return NextResponse.json({ error: "No active tour found for this language" }, { status: 404 })
-    }
-    
-    // Use the most recent offer (assuming the last one in the list)
-    const offerKey = offerKeys[offerKeys.length - 1]
-    
-    // Extract the tour ID from the key
-    const tourId = offerKey.split(":")[1]
-    
-    // Get all ICE candidates for this tour and language
-    const iceCandidatesJson = await redis.lrange(`tour:${tourId}:ice:guide:${language}`, 0, -1)
+    // Get ICE candidates using the correct tourId
+    const iceCandidatesJson = await redis.lrange(
+      `tour:${tourId}:ice:guide:${language}`,
+      0,
+      -1
+    )
     
     // Parse the candidates
     const candidates = iceCandidatesJson.map((json: string) => JSON.parse(json))

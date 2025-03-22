@@ -48,7 +48,12 @@ export async function POST(request: Request) {
 
     // Store tour code in Redis, linking it to tourId
     await redis.set(`tour_codes:${tourCode}`, tourId)
-
+    
+    // Store tour offer in Redis for the specified language (normalized to lowercase)
+    await redis.set(`tour:${tourId}:offer:${language.toLowerCase()}`, JSON.stringify({
+      offer: `Initialized offer for ${language}`
+    }))
+    
     // Store tour ID in guide's active tours (no change)
     await redis.set(`guide:${user.id}:active_tour`, tourId)
 

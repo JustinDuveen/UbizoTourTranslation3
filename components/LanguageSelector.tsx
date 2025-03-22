@@ -4,7 +4,7 @@ interface LanguageSelectorProps {
   language: string;
   setLanguage: (language: string) => void;
   options?: string[];
-  connectToGuide: () => void; // Add connectToGuide prop
+  connectToGuide?: () => void; // Add connectToGuide prop
   disabled?: boolean; // Optional disabled prop
 }
 
@@ -29,7 +29,7 @@ export default function LanguageSelector({ language, setLanguage, options, conne
 
   const handleLanguageChange = (newLanguage: string) => {
     setLanguage(newLanguage);
-    connectToGuide(); // Reconnect with the new language
+    connectToGuide?.(); // Reconnect with the new language
   };
   
   return (

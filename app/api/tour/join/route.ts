@@ -4,7 +4,8 @@ import { getRedisClient } from "@/lib/redis";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const tourCode = searchParams.get("tourCode");
-  const language = searchParams.get("language");
+  const languageParam = searchParams.get("language");
+  const language = languageParam ? languageParam.toLowerCase() : null;
 
   if (!tourCode || !language) {
     return NextResponse.json({ error: "Missing tourCode or language" }, { status: 400 });
@@ -15,20 +16,29 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Failed to connect to Redis" }, { status: 500 });
   }
 
-  const redisKey = `tour:${tourCode}:${language}`;
-
   try {
-    const offer = await redisClient.get(redisKey);
+    // First, get the tourId from the tourCode
+    const tourId = await redisClient.get(`tour_codes:${tourCode}`);
 
-    if (!offer) {
-      return NextResponse.json({ error: "Offer not found" }, { status: 404 });
+    if (!tourId) {
+      return NextResponse.json({ error: "Invalid tour code" }, { status: 404 });
     }
 
-    return NextResponse.json({ offer }, { status: 200 });
+    // Now get the translated audio using the correct key format
+  const translatedAudioJson = await redisClient.get(`tour:${tourId}:translated_audio:${language}`);
+  let translatedAudio = null;
+  if (translatedAudioJson) {
+    translatedAudio = JSON.parse(translatedAudioJson);
+  }
+
+  // Return the tourId with indicator for translationStarted and the translatedAudio (which may be null if not available)
+  return NextResponse.json({ 
+    tourId,
+    translationStarted: translatedAudio !== null,
+    translatedAudio
+  }, { status: 200 });
   } catch (error) {
     console.error("Redis error:", error);
     return NextResponse.json({ error: "Failed to retrieve offer from Redis" }, { status: 500 });
-  } finally {
-    await redisClient.quit();
   }
 }

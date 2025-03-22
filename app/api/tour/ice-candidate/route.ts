@@ -21,7 +21,5 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Redis error:", error);
     return NextResponse.json({ error: "Failed to publish ICE candidate" }, { status: 500 });
-  } finally {
-    await redisClient.quit();
   }
 }

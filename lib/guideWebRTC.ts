@@ -311,14 +311,16 @@ function scheduleKeyRenewal(language: string) {
     return;
   }
 
-  const renewalTime = timeUntilExpiry - 50000;
+  // Renew 10 seconds before expiry to ensure we always have a valid key
+  // OpenAI requires keys to expire after 1 minute
+  const renewalTime = Math.max(timeUntilExpiry - 10000, 1000); // At least 1 second, but ideally 10 seconds before expiry
   const timerId = window.setTimeout(
     () => renewEphemeralKey(language), 
     renewalTime // Pass delay as second argument
   );
   renewalTimers.set(language, timerId);
 
-  console.log(`Scheduled key renewal for ${language} in ${renewalTime}ms`);
+  console.log(`Scheduled key renewal for ${language} in ${renewalTime}ms (${Math.round(renewalTime/1000)} seconds before expiry)`);
 }
 
 
@@ -326,12 +328,12 @@ function scheduleKeyRenewal(language: string) {
   const openaiPC = new RTCPeerConnection({
     iceServers: [
       {
-        urls: 'turn:192.168.240.1:3478',
+        urls: 'turn:192.168.245.82:3478',
         username: 'username1',
         credential: 'password1'
       },      
       {
-        urls: 'turns:192.168.240.1:443',
+        urls: 'turns:192.168.245.82:443',
         username: 'username1',
         credential: 'password1'
       },
@@ -396,10 +398,10 @@ function scheduleKeyRenewal(language: string) {
       // Load language-specific audio instructions
       const audioInstructionsBase64 = await loadAudioInstructions(language);
       
-      // Send audio instructions only - NO TEXT INSTRUCTIONS
+      // Send audio and text modalities - OpenAI requires both or just text
       openaiDC.send(JSON.stringify({
         type: "response.create",
-        response: { modalities: ["audio"] }
+        response: { modalities: ["audio", "text"] }
       }));
     } catch (error) {
       console.error(`Failed to load audio instructions for ${language}:`, error);
@@ -438,9 +440,82 @@ function scheduleKeyRenewal(language: string) {
   openaiDC.onmessage = (e) => {
     const realtimeEvent = JSON.parse(e.data);
     console.log(`OpenAI event received for ${language}:`, realtimeEvent.type);
-    
-    // ✅ No text event handling remains
-    // Add audio-related event handling here if needed
+
+    if (realtimeEvent.type === "error") {
+      console.error("OpenAI Server Error:", { ...realtimeEvent }); // Use spread for concise logging
+      return; // Exit the handler after logging the error
+    }
+
+    switch (realtimeEvent.type) {
+      case "session.created":
+        console.log("Session created:", realtimeEvent);
+        // Update UI, set a flag, etc.
+        break;
+        
+      case "session.updated":
+        console.log("Session updated:", realtimeEvent.session);
+        // Handle session updates from OpenAI
+        break;
+        
+      case "response.created":
+        console.log("Response created:", realtimeEvent.response);
+        // Response has been created successfully
+        break;
+        
+      case "rate_limits.updated":
+        console.log("Rate limits updated:", realtimeEvent.rate_limits);
+        // Track rate limits for monitoring usage
+        break;
+
+      case "response.audio.delta":
+        const base64Audio = realtimeEvent.delta; // Or whatever the field name is
+        if (base64Audio) {
+          try {
+            // Decode the Base64 audio
+            const audioBuffer = base64ToArrayBuffer(base64Audio);
+
+            // Play the audio - Implementation needed
+            playAudio(audioBuffer, language);
+          } catch (decodeError) {
+            console.error("Error decoding or playing audio:", decodeError);
+          }
+        }
+        break;
+
+      case "response.text.delta":
+        const newText = realtimeEvent.delta;
+        //  Update UI with the new text
+        // setTranslation(prevTranslation => prevTranslation + newText); //React example
+        // Replace with your actual implementation
+        setTranslation(newText);
+
+        break;
+
+      case "response.done":
+        console.log("Response complete:", realtimeEvent);
+        //  Clean up, signal the end of the response
+        break;
+      case "input_audio_buffer.speech_started":
+        console.log('speech has started.');
+        break;
+      case "input_audio_buffer.speech_stopped":
+        console.log('speech has stopped.');
+        break;
+      case "input_audio_buffer.committed":
+        console.log('Audio buffer committed:', realtimeEvent);
+        // This event indicates that a segment of the user's audio has been 
+        // processed and finalized by the OpenAI API
+        // You might want to update UI or track audio processing progress
+        break;
+      case "conversation.item.created":
+        console.log('Conversation item created:', realtimeEvent);
+        // This event signifies that a new item has been added to the conversation history
+        // Important for maintaining an accurate record of the conversation
+        // You might want to update conversation state or UI
+        break;
+      default:
+        console.log("Unhandled message type:", realtimeEvent.type, realtimeEvent);
+    }
   };
   
   // Create and send offer to OpenAI
@@ -548,7 +623,7 @@ async function createAttendeeConnection(
   const attendeePC = new RTCPeerConnection({
     iceServers: [
       {
-        urls: 'turn:192.168.240.1:3478',
+        urls: 'turn:192.168.245.82:3478',
         username: 'username1',
         credential: 'password1'
       },
@@ -679,11 +754,10 @@ async function pollForAttendeeAnswers(
     const answersResponse = await fetch(
       `/api/tour/answer?language=${encodeURIComponent(language)}&tourId=${encodeURIComponent(tourId)}`, 
       { 
-        method: "POST",
+        method: "GET", 
         credentials: "include" 
       }
     );
-
     
     if (!answersResponse.ok) {
       console.error(`Failed to poll for answers: ${answersResponse.status} ${answersResponse.statusText}`);
@@ -991,3 +1065,39 @@ async function sendClosingMessage(language: string): Promise<void> {
         });
     }
 }
+
+   // Helper functions
+   function base64ToArrayBuffer(base64: string): ArrayBuffer {
+     const binaryString = atob(base64);
+     const bytes = new Uint8Array(binaryString.length);
+     for (let i = 0; i < binaryString.length; i++) {
+       bytes[i] = binaryString.charCodeAt(i);
+     }
+     return bytes.buffer;
+   }
+
+   async function playAudio(audioBuffer: ArrayBuffer, language: string): Promise<void> {
+     //  Web Audio API example
+     const audioContext = new AudioContext();
+     audioContext.decodeAudioData(audioBuffer, async function(buffer) {
+       const source = audioContext.createBufferSource();
+       source.buffer = buffer;
+       source.connect(audioContext.destination);
+       source.start(0);
+       // Forward audio to attendees
+       try {
+        const pcmData = buffer.getChannelData(0); // Assuming mono audio
+        const arrayBuffer = new ArrayBuffer(pcmData.length * 4); // Float32 is 4 bytes
+        const dataView = new DataView(arrayBuffer);
+        for (let i = 0; i < pcmData.length; i++) {
+          dataView.setFloat32(i * 4, pcmData[i], true); // true for little-endian
+        }
+         await forwardTranslationToAttendees(language, { type: "audio", audio: arrayBuffer });
+       } catch (error) {
+         console.error("Error forwarding audio to attendees:", error);
+       }
+     }, (e) => { console.error("Error decoding audio data", e); });
+   }
+
+   function setTranslation(translation: string): void {
+   }

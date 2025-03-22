@@ -17,29 +17,15 @@ export async function POST(request: Request) {
 
     // Parse request body
     const body = await request.json()
-    const { language, candidate } = body
+    const { language, candidate, tourId } = body
 
-    if (!language || !candidate) {
+    if (!language || !candidate || !tourId) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
     // Get Redis client
     const redis = await getRedisClient()
-    
-    // Find active tours with offers for this language
-    const keys = await redis.keys("tour:*:offer:*")
-    const offerKeys = keys.filter((key: string) => key.endsWith(`:${language}`))
-    
-    if (offerKeys.length === 0) {
-      return NextResponse.json({ error: "No active tour found for this language" }, { status: 404 })
-    }
-    
-    // Use the most recent offer (assuming the last one in the list)
-    const offerKey = offerKeys[offerKeys.length - 1]
-    
-    // Extract the tour ID from the key
-    const tourId = offerKey.split(":")[1]
-    
+
     // Store the ICE candidate in Redis
     await redis.rpush(`tour:${tourId}:ice:attendee:${language}:${user.id}`, JSON.stringify(candidate))
     
