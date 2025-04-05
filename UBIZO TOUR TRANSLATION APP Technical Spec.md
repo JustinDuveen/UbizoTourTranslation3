@@ -1,263 +1,216 @@
-UBIZO APP - step by step build plan based on spec with Perplexity 5 March
+Ubizo Tour Translation App - Complete Technical Specification
+1. Overview
+1.1 Purpose
+The Ubizo Tour Translation App enables real-time multilingual communication between tour guides and attendees using OpenAI’s Realtime WebRTC API for ultra-low-latency voice-to-voice translation. The system ensures seamless translation of spoken content into multiple languages simultaneously while maintaining high audio quality and minimal delay.
 
-## **1. Overview**
+1.2 Target Audience
+Primary Users: Tour guides and attendees in small-group tours.
 
-### **1.1 Purpose**
-The Ubizo Tour Translation App is designed to facilitate real-time multilingual communication between tour guides and attendees. It leverages the OpenAI Realtime WebRTC API for low-latency voice-to-voice interactions.
+Secondary Users: Administrators managing backend infrastructure, analytics, and session monitoring.
 
-### **1.2 Target Audience**
-- **Primary Users**: Tour guides and attendees participating in small group tours.
-- **Secondary Users**: Administrators managing backend infrastructure and analytics.
+2. Core Architecture
+2.1 System Components
+Component	Technology	Purpose
+Frontend (Guide & Attendee)	Next.js, React, WebRTC	UI, real-time audio streaming, session management
+Backend API	Next.js API Routes, Node.js	Session management, authentication, key rotation
+Signaling Server	WebSocket (Socket.io)	WebRTC peer negotiation
+Database	Supabase	Persistent session & user data
+Real-time Cache	Redis	Active session tracking, language routing
+Translation API	OpenAI Realtime WebRTC API	Speech-to-speech translation
+TURN/STUN Servers	Coturn (self-hosted), Google STUN	NAT traversal for WebRTC
+Deployment	Docker, Kubernetes	Scalable cloud deployment
+3. Detailed Functional Requirements
+3.1 Guide Functionality
+1. Tour Session Creation
+Frontend (app/guide/page.tsx):
 
----
+Input field for tour name + "Create Tour" button.
 
-## **2. Functional Requirements**
+On click → POST /api/tour/create.
 
-### **2.1 Core Features**
-#### **Tour Guide Functionality**
-- Ability to create a unique tour session with a custom name
-- Toggle functionality: Press once to activate and again to deactivate.
-- Keeps the microphone active while speaking.
-- Complies with OPEN-AI-REALTIME-API with WebRTC for permanent connections with peers
-- Guide device first appends a default audio instruction to the beginning of the stream and sends this to the Open-AI- Realtime API to ensure valid connection
-- Guide device collects language pref from attendees and ensures only one translation request per language is sent asynchronously to the OPEN-AI-REALTIME-API with WebRTC together with the correctly prepended audio translation instruction.
-- Guide device acts as main hub together with Redis for sending translations to attendees based on their language (for example all Dutch speakers receive the dutch translation via WebRTC.
-- Real-time translation of guide speech into multiple attendee-selected languages.
-- Distribution of translated audio streams directly to attendees using WebRTC from the Guide Device with the help of Redis and using the variables for TourID and Translation Language to send the right translation to the right attendee.
+Backend (app/api/tour/create/route.ts):
 
-#### **Attendee Functionality**
-- Join a tour session by entering the tour name or scanning a QR code.
-- Select a preferred language for translation upon joining.
-- Activates microphone for asking questions.
-- Translates attendee speech into the guide’s language in real time.
-- Receive translated audio streams from the guide.
+JWT auth → Generate TourID (UUID) → Store in Supabase (tour_sessions).
 
-### **2.2 Additional Features**
-- Dynamic management of multiple languages per session (e.g., English to French, German, etc.).
-- Support for up to 20 attendees per session using Guides device with Redis only for managing the communication during the tour.
-- Connection quality monitoring with real-time feedback (e.g., jitter, packet loss).
-- Automatic reconnection during network disruptions.
-- Ensure echo cancellation and audio cleanup options in the browser are enabled to help ensure clean audio.(do not add any other server based audio processing!!)
+Return TourID + optional shareable code.
 
----
+2. WebRTC Audio Streaming
+Guide Device (lib/guideWebRTC.ts):
 
-## **3. Technical Requirements**
+Toggle mic (push-to-talk or continuous).
 
-### **3.1 Backend Infrastructure**
-#### **Core Components**
-1. **Signaling Server**:
-- Built using Node.js with WebSocket support for managing WebRTC connections.
-- Handles session creation, attendee registration, and ICE candidate exchange.
-- Includes JWT-based authentication for secure signaling.
+Prepend OpenAI instruction (once per language):
 
-2. **Ephemeral Key Management**:
-- Use OpenAI’s REST API to generate ephemeral keys for client-side authentication.
-- Implement an endpoint (`/api/session`) to fetch ephemeral keys securely.
-= As they are temporary (60 seconds) they need to be stored and refreshed properly
+typescript
+Copy
+if (!sentInstructions.has(language)) {
+  sendAudioSegment(loadInstruction(language));
+  sentInstructions.add(language);
+}
+Manage WebRTC connections:
 
-3. **Database**:
-- Use Supabase (PostgreSQL) for persistent storage:
-- User profiles (guides and attendees).
-- Tour session details (names, timestamps).
-- TourID
-- Language preferences and historical logs.
+1 sendonly connection per language to OpenAI.
 
-4. **OpenAI Integration**:
-- Real-time API for speech-to-speech translation workflows.
-- Secure API key management with rate limiting.
+Forward translations to attendees via Redis-routed P2P WebRTC.
 
-5. **TURN/STUN Servers**:
-- Self-hosted TURN servers distributed regionally for low-latency NAT traversal.
-- Google’s public STUN servers as backups.
+3. Attendee Language Management
+Redis Structure:
 
----
+json
+Copy
+{
+  "tour:{TourID}": {
+    "attendees": {
+      "AttendeeID1": "french",
+      "AttendeeID2": "german"
+    }
+  }
+}
+Guide polls /api/tour/{TourID}/attendees or uses WebSocket updates.
 
-### **3.2 Frontend Architecture**
-#### **Guide Interface**
-- Web app interface with:
-- Tour creation form (name input).
-- Push-to-talk button with toggle functionality.
-- Real-time status indicators (e.g., active attendees, connection quality).
+3.2 Attendee Functionality
+1. Joining a Tour
+Frontend (app/attendee/page.tsx):
 
-#### **Attendee Interface**
-- Web or mobile app interface with:
-- Join tour form (tour name or QR code input).
-- Language selection dropdown menu.
-- Audio playback controls.
+Input for TourID/QR scan → POST /api/tour/join.
 
-#### **Shared Features**
-- Notifications for connection issues or translation status updates.
-- Visual feedback for active microphone or translation activity.
+Backend (app/api/tour/join/route.ts):
 
----
+Validate TourID → Store attendee in Supabase + Redis.
 
-### **3.3 Real-Time Translation Pipeline**
-1. Capture guide/attendee audio via WebRTC RTP streams.
-2. Use OpenAI’s Realtime API for speech-to-speech translation:
-- Authenticate with ephemeral keys.
-- Prepend default audio instruction and send audio directly to OpenAI for real-time translation via WebRTC.
-- Based on Attendee languages, once for each language translation required: Prepend appropriate audio instruction and send audio directly to OpenAI for real-time translation via WebRTC (eg. english_to_dutch_Translation_Instruction.mp3. Perform this asyncronously for each language required by Attendees in that particular tour.
-3. Receive translated audio from OpenAI via WebRTC and distribute it directly to the correct recipients using WebRTC P2P connections.
+2. Language Selection
+Dropdown UI → POST /api/attendee/language → Update Redis.
 
----
+3. Real-Time Translation Reception
+WebRTC Flow:
 
-### **3.4 Deployment Architecture**
-1. Use Docker containers for all components (backend, signaling server, TURN servers).
-2. Orchestrate deployments using Kubernetes for scalability.
-3. Monitoring & Observability:
-- Prometheus + Grafana for real-time metrics on latency, jitter, packet loss.
-4. CI/CD Pipeline:
-- Automated testing of WebRTC components.
----
+Attendee selects language (e.g., Spanish).
 
-### **4.2 Security**
-- DTLS-SRTP encryption for all WebRTC streams.
-- Short-lived JWT tokens for authentication.
-- Secure API key storage with rotation policies.
+Guide’s device receives OpenAI Spanish translation.
 
-### **4.3 Reliability**
-- Automatic reconnection with session persistence during network disruptions.
-- Circuit breaker patterns to prevent cascading failures in case of API outages.
+Guide forwards audio via WebRTC to all Spanish-speaking attendees.
 
+Attendees play stream via <audio> element.
 
-##### CURRENT PROJECT DIRECTORY STRUCTURE FOR REFERENCE:
+4. Asking Questions
+Push-to-talk → WebRTC stream to guide.
 
-.
-├── .cursorrules.txt
-├── .gitignore
-├── AIexplantionforfiles.md
-├── middleware.ts
-├── next.config.js
-├── next.config.mjs
-├── Open_AI_Realtime_API_USING_WEBRTC_Setup.md
-├── package-lock.json
-├── package.json
-├── postcss.config.mjs
-├── tailwind.config.js
-├── testred.js
-├── tsconfig.json
-├── UBIZO TOUR TRANSLATION APP Technical Spec.pdf
-├── app
-│   ├── globals.css
-│   ├── layout.tsx
-│   ├── page.tsx
-│   ├── api
-│   │   ├── auth
-│   │   │   ├── check
-│   │   │   │   └── route.ts
-│   │   │   ├── login
-│   │   │   │   └── route.ts
-│   │   │   └── register
-│   │   │       └── route.ts
-│   │   ├── session
-│   │   │   └── route.ts
-│   │   └── tour
-│   │       ├── answer
-│   │       │   └── route.ts
-│   │       ├── attendee-ice
-│   │       │   └── route.ts
-│   │       ├── end
-│   │       │   └── route.ts
-│   │       ├── guide-ice
-│   │       │   └── route.ts
-│   │       ├── ice-candidate
-│   │       │   └── route.ts
-│   │       ├── join
-│   │       │   └── route.ts
-│   │       ├── offer
-│   │       │   └── route.ts
-│   │       └── start
-│   │           └── route.ts
-│   ├── attendee
-│   │   └── page.tsx
-│   ├── guide
-│   │   └── page.tsx
-│   ├── login
-│   │   └── page.tsx
-│   └── register
-│       └── page.tsx
-├── components
-│   ├── AttendeeList.tsx
-│   ├── GuideWebRTCManager.tsx
-│   ├── LanguageSelector.tsx
-│   ├── theme-provider.tsx
-│   ├── TourControls.tsx
-│   ├── TranslationOutput.tsx
-│   └── ui
-│       ├── accordion.tsx
-│       ├── alert-dialog.tsx
-│       ├── alert.tsx
-│       ├── aspect-ratio.tsx
-│       ├── avatar.tsx
-│       ├── badge.tsx
-│       ├── breadcrumb.tsx
-│       ├── button.tsx
-│       ├── calendar.tsx
-│       ├── card.tsx
-│       ├── carousel.tsx
-│       ├── chart.tsx
-│       ├── checkbox.tsx
-│       ├── collapsible.tsx
-│       ├── command.tsx
-│       ├── context-menu.tsx
-│       ├── dialog.tsx
-│       ├── drawer.tsx
-│       ├── dropdown-menu.tsx
-│       ├── form.tsx
-│       ├── hover-card.tsx
-│       ├── input-otp.tsx
-│       ├── input.tsx
-│       ├── label.tsx
-│       ├── menubar.tsx
-│       ├── navigation-menu.tsx
-│       ├── pagination.tsx
-│       ├── popover.tsx
-│       ├── progress.tsx
-│       ├── radio-group.tsx
-│       ├── resizable.tsx
-│       ├── scroll-area.tsx
-│       ├── select.tsx
-│       ├── separator.tsx
-│       ├── sheet.tsx
-│       ├── sidebar.tsx
-│       ├── skeleton.tsx
-│       ├── slider.tsx
-│       ├── sonner.tsx
-│       ├── switch.tsx
-│       ├── table.tsx
-│       ├── tabs.tsx
-│       ├── textarea.tsx
-│       ├── toast.tsx
-│       ├── toaster.tsx
-│       ├── toggle-group.tsx
-│       ├── toggle.tsx
-│       ├── tooltip.tsx
-│       ├── use-mobile.tsx
-│       └── use-toast.ts
-├── hooks
-│   ├── use-mobile.tsx
-│   └── use-toast.ts
-├── lib
-│   ├── auth.ts
-│   ├── guideWebRTC.ts
-│   ├── redis.ts
-│   ├── supabase.ts
-│   ├── utils.ts
-│   └── webrtc.ts
-├── pages
-│   └── api
-│       ├── [...nextauth].ts
-│       ├── test-redis.ts
-│       └── tours
-│           └── [id].ts
-└── public
-    ├── placeholder-logo.png
-    ├── placeholder-logo.svg
-    ├── placeholder-user.jpg
-    ├── placeholder.jpg
-    ├── placeholder.svg
-    └── audio
-        ├── english_to_dutch_Translation_Instruction.mp3
-        ├── english_to_english_Translation_Instruction.mp3
-        ├── english_to_french_Translation_Instruction.mp3
-        └── english_to_german_Translation_Instruction.mp3
+Prepend reverse instruction (e.g., spanish_to_english_instruction.mp3).
+
+4. Enhanced Technical Implementation
+4.1 Audio Processing Pipeline
+Step	Action	Tech Used
+1. Mic Capture	getUserMedia with noise suppression	WebRTC
+2. Instruction Prepend	One-time per language	AudioContext
+3. OpenAI Streaming	Send via WebRTC	RTCPeerConnection
+4. Translation Routing	Redis → Attendee WebRTC	P2P
+4.2 Ephemeral Key Management
+Backend Service (lib/keyManager.ts):
+
+typescript
+Copy
+// Proactive rotation (45s intervals)
+const keyManager = new EphemeralKeyManager({
+  minPoolSize: 3,
+  maxPoolSize: 5,
+  refreshInterval: 45000,
+  onError: (err) => {
+    // Exponential backoff
+    this.retryInterval = Math.min(this.retryInterval * 2, 300000);
+  }
+});
+
+// Fetch key for WebRTC session
+app.post("/api/webrtc/key", (req, res) => {
+  res.json({ key: keyManager.getValidKey() });
+});
+4.3 Connection Pooling & Degradation
+Guide Device (lib/connectionPool.ts):
+
+typescript
+Copy
+class ConnectionPool {
+  private maxConnections = 20;
+  private connections: Map<string, RTCPeerConnection> = new Map();
+
+  getConnection(key: string): RTCPeerConnection {
+    if (!this.connections.has(key) && this.connections.size < this.maxConnections) {
+      this.connections.set(key, new RTCPeerConnection(config));
+    }
+    return this.connections.get(key)!;
+  }
+
+  // Graceful degradation
+  enforceLimits() {
+    if (this.connections.size >= this.maxConnections * 0.9) {
+      closeOldestInactiveConnection();
+    }
+  }
+}
+5. Error Handling & Recovery
+Error Scenario	Recovery Action
+Microphone permission denied	Show permissions modal → reload on grant.
+ICE failure	RTCPeerConnection.restartIce() + 3 retries.
+OpenAI quota exceeded	Queue translations, notify guide.
+WebRTC connection limit	Close oldest inactive connection.
+Network dropout	Buffer audio → auto-reconnect.
+UI Integration (components/ErrorHandler.tsx):
+
+tsx
+Copy
+<ErrorHandler 
+  error={currentError}
+  actions={{
+    "microphone_permission_denied": () => reloadPage(),
+    "ice_failure": () => reconnectWebRTC()
+  }}
+/>
+6. Deployment & Scaling
+6.1 Infrastructure
+Component	Deployment	Scaling Strategy
+Frontend	Vercel/Cloudflare	CDN caching
+Backend	Kubernetes pods	Horizontal pod autoscaling
+Redis	Managed cluster (Upstash)	Sharding
+TURN	Regional Coturn servers	Load balancing
+6.2 CI/CD Pipeline
+mermaid
+Copy
+graph LR
+  A[Git Push] --> B[Run Tests]
+  B --> C[Build Docker Images]
+  C --> D[Deploy to Staging]
+  D --> E[Manual Approval]
+  E --> F[Rollout to Production]
+7. Security
+Data Encryption: DTLS-SRTP (WebRTC default).
+
+Auth: JWT with 15m expiry + secure cookies.
+
+API Keys: Backend-only storage + rotation.
+
+Monitoring: Prometheus alerts for anomalous traffic.
+
+8. Appendix: Full File Structure
+Copy
+ubizo-app/
+├── app/
+│   ├── guide/
+│   │   └── page.tsx          # Guide UI
+│   ├── attendee/
+│   │   └── page.tsx          # Attendee UI
+│   └── api/
+│       ├── tour/
+│       │   ├── create/route.ts
+│       │   └── join/route.ts
+│       └── webrtc/key/route.ts
+├── lib/
+│   ├── guideWebRTC.ts        # Guide WebRTC logic
+│   ├── attendeeWebRTC.ts     # Attendee WebRTC logic
+│   ├── redis.ts              # Redis session management
+│   └── keyManager.ts         # Ephemeral key rotation
+├── public/
+│   └── instructions/         # Preloaded OpenAI instruction audios
+└── infra/
+    ├── docker-compose.yml    # TURN + signaling
+    └── k8s/                  # Kubernetes manifests
+This spec provides a complete, production-ready blueprint for the Ubizo app.

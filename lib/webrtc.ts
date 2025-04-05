@@ -1,423 +1,236 @@
-// Map of language to WebRTC connections for attendees
+// Global connections manager
 const connections = new Map<string, {
-    pc: RTCPeerConnection,
-    audioEl: HTMLAudioElement,
-    tourCode: string, // Store tourCode here
-    keyRefreshTimer: NodeJS.Timeout | null; // Add to store timer ID
-}>()
+  pc: RTCPeerConnection,
+  audioEl: HTMLAudioElement,
+  tourCode: string,
+  keyRefreshTimer: NodeJS.Timeout | null,
+  audioContext?: AudioContext
+}>();
 
-export async function initWebRTC(setTranslation: (translation: string) => void, language: string, tourCode: string) {
+// Audio configuration
+const AUDIO_CODEC_PREFERENCES = [
+  'opus/48000/2',
+  'PCMU/8000',
+  'PCMA/8000'
+];
+
+export async function initWebRTC(
+  setTranslation: (text: string) => void,
+  language: string,
+  tourCode: string,
+  options?: { signal?: AbortSignal }
+) {
   try {
-    const response = await fetch(`/api/tour/join?tourCode=${tourCode}&language=${language}`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to join tour');
-    }
-    
-    let { offer, tourId } = await response.json();
-    
-    // Store the tourId for later use
-    localStorage.setItem('currentTourId', tourId);
+      // 1. Initialize connection and fetch offer
+      const { offer, tourId } = await fetchTourOffer(tourCode, language);
+      localStorage.setItem('currentTourId', tourId);
 
-    if (!offer) {
-      setTranslation("Waiting for translation data...");
-      console.log("No offer received from join response. Entering polling mode for translation data.");
-      while (!offer) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        try {
-          const pollResponse = await fetch(`/api/tour/join?tourCode=${tourCode}&language=${language}`, { credentials: "include" });
-          if (pollResponse.ok) {
-            const pollData = await pollResponse.json();
-            if (pollData.offer) {
-              offer = pollData.offer;
-              console.log("Translation data received via polling, proceeding with WebRTC setup.");
-            } else {
-              console.log("Still waiting for translation data...");
-            }
-          }
-        } catch (err) {
-          console.error("Error polling for translation data:", err);
-        }
-      }
-    }
-    
-    console.log("=== INITIALIZING ATTENDEE WEBRTC ===")
-    console.log(`Language selected: ${language}, Tour Code: ${tourCode}`)
+      // 2. Set up ephemeral key refresh
+      const keyRefreshTimerId = setupKeyRefresh(language);
 
-    // Fetch ephemeral key from /api/session
-    const sessionResponse = await fetch("/api/session", {
-      credentials: "include"
-    })
-    if (!sessionResponse.ok) {
-      const errorText = await sessionResponse.text()
-      console.error(`Failed to fetch ephemeral key: ${sessionResponse.status} ${sessionResponse.statusText}`, errorText)
-      throw new Error(`Failed to fetch ephemeral key: ${sessionResponse.statusText}`)
-    }
-    const sessionData = await sessionResponse.json()
-    const ephemeralKey = sessionData.client_secret.value
-    console.log("Ephemeral key fetched successfully")
+      // 3. Create optimized peer connection
+      const { pc, audioEl } = createPeerConnection(language, tourCode, setTranslation);
 
-    // --- ADD KEY REFRESH TIMER HERE ---
-    let keyRefreshTimerId: NodeJS.Timeout | null = null; // Variable to hold timer ID
-    const startKeyRefreshTimer = () => {
-        keyRefreshTimerId = setInterval(async () => {
-            console.log(`Refreshing ephemeral key for language: ${language}`);
-            try {
-                const refreshResponse = await fetch("/api/session", { // Re-fetch ephemeral key
-                    credentials: "include"
-                });
-                if (!refreshResponse.ok) {
-                    const errorText = await refreshResponse.text();
-                    console.error(`Failed to refresh ephemeral key: ${refreshResponse.status} ${refreshResponse.statusText}`, errorText);
-                    // In a more robust implementation, you might trigger a reconnection here if key refresh consistently fails.
-                } else {
-                    const refreshData = await refreshResponse.json();
-                    const newEphemeralKey = refreshData.client_secret.value;
-                    console.log(`Ephemeral key refreshed successfully for language: ${language}`);
-                    // In this basic implementation, we are NOT updating the existing connection.
-                    // The new key will be used for the next connection or reconnection attempt.
-                    //  More advanced:  Dynamic update or session renegotiation (complex).
-                }
-            } catch (error) {
-                console.error("Error refreshing ephemeral key:", error);
-                // Handle refresh error (e.g., retry, log to user)
-            }
-        }, 45000); // Refresh every 45 seconds (adjust as needed, slightly less than expected expiry)
-    };
+      // 4. Configure media handlers
+      setupMediaHandlers(pc, audioEl, setTranslation);
 
-    startKeyRefreshTimer(); // Start the timer immediately after getting the initial key
+      // 5. Complete signaling
+      await completeSignaling(pc, language, tourId);
 
-    // Create peer connection for receiving translations with multiple STUN servers
-    // for better NAT traversal as specified in the tech spec
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: 'turn:192.168.245.82:3478', // Replace with your TURN server IP
-          username: 'username1', // Use a valid username from your turnserver.conf
-          credential: 'password1' // Use the corresponding password
-        },
-        {
-          urls: 'turn:192.168.245.82:443', // Replace with your TURN server IP (TURN over TLS)
-          username: 'username1', // Use a valid username from your turnserver.conf
-          credential: 'password1' // Use the corresponding password
-        },
-        { urls: ["stun:stun.l.google.com:19302"] },
-        { urls: ["stun:stun1.l.google.com:19302"] },
-        { urls: ["stun:stun2.l.google.com:19302"] },
-        { urls: ["stun:stun3.l.google.com:19302"] },
-        { urls: ["stun:stun4.l.google.com:19302"] }
-      ],
-    })
-
-    console.log('Using ICE servers:', pc.getConfiguration().iceServers);
-
-    // Set up audio element for receiving translated audio
-    const audioEl = new Audio()
-    audioEl.autoplay = true
-    
-
-
-    // Add event listener to handle autoplay restrictions
-    audioEl.addEventListener('canplaythrough', () => {
-      const playPromise = audioEl.play()
-      if (playPromise !== undefined) {
-        playPromise.catch(error => {
-          console.error("Autoplay prevented:", error)
-          // Implement user gesture requirement notification here if needed
-        })
-      }
-    })
-    
-    // Handle incoming audio tracks from the guide
-    pc.ontrack = (e) => {
-      console.log("Received audio track from guide:", e.track.kind)
-      audioEl.srcObject = e.streams[0]
-      
-      // Attempt to play audio after track is received
-      audioEl.play().then(() => {
-        console.log("Audio playback started successfully");
-      }).catch(error => {
-        console.error("Autoplay prevented or playback failed:", error);
-        // Optionally, show a message to the user that they need to interact to start audio
+      // 6. Store connection
+      connections.set(language, { 
+          pc, 
+          audioEl, 
+          tourCode, 
+          keyRefreshTimer: keyRefreshTimerId 
       });
 
-      // Monitor audio levels for debugging (optional, can be removed later)
-      const audioContext = new AudioContext()
-      const source = audioContext.createMediaStreamSource(e.streams[0])
-      const analyser = audioContext.createAnalyser()
-      analyser.fftSize = 256
-      source.connect(analyser)
-      
-      const dataArray = new Uint8Array(analyser.frequencyBinCount)
-      const checkAudioLevels = () => {
-        analyser.getByteFrequencyData(dataArray)
-        let sum = 0
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i]
-        }
-        const average = sum / dataArray.length
-        console.log(`Audio level: ${average}`)
-        
-        if (average > 0) {
-          console.log("Audio is being received")
-        }
-      }
-      
-      // Check audio levels every second
-      const audioLevelInterval = setInterval(checkAudioLevels, 1000)
-      
-      // Clean up when track ends
-      e.track.onended = () => {
-        clearInterval(audioLevelInterval)
-        audioContext.close()
-      }
-    }
+      // Cleanup on abort
+      options?.signal?.addEventListener('abort', () => cleanupConnection(language));
 
-    // Handle data channel created by guide
-    pc.ondatachannel = (event) => {
-      console.log("Data channel received from guide:", event.channel.label)
-      const dc = event.channel
-      
-      
-      dc.onopen = () => {
-        console.log("Data channel opened")
-      }
-      
-      dc.onclose = () => {
-        console.log("Data channel closed", dc.readyState)
-      }
-      
-      dc.onerror = (error) => {
-        console.error("Data channel error:", error)
-      }
-      
-      dc.onmessage = (e) => {
-        try {
-          const realtimeEvent = JSON.parse(e.data)
-          console.log("Received event from guide:", realtimeEvent.type)
-          
-          // Handle incremental translation updates
-          if (realtimeEvent.type === "translation.update" && realtimeEvent.text) {
-            setTranslation(realtimeEvent.text)
-          }
-          // Handle complete translation
-          else if (realtimeEvent.type === "translation.complete" && realtimeEvent.text) {
-            setTranslation(realtimeEvent.text)
-          } else if (realtimeEvent.type === "audio") {
-            // Handle audio data
-            try {
-              let audioBuffer = realtimeEvent.audio;
-
-              if (audioBuffer) {
-                // Convert the audioBuffer to an ArrayBuffer if it's not already
-                if (typeof audioBuffer === 'object' && audioBuffer !== null && !(audioBuffer instanceof ArrayBuffer)) {
-                  audioBuffer = new Uint8Array(Object.values(audioBuffer)).buffer;
-                }
-
-                // Play the audio
-                const audioContext = new AudioContext();
-                audioContext.decodeAudioData(audioBuffer, function(buffer) {
-                  const source = audioContext.createBufferSource();
-                  source.buffer = buffer;
-                  source.connect(audioContext.destination);
-                  source.start(0);
-                }, (e) => { console.error("Error decoding audio data", e); });
-              }
-            } catch (error) {
-              console.error("Error handling audio data:", error);
-            }
-          }
-        } catch (error) {
-          console.error("Error parsing data channel message:", error)
-        }
-      }
-    }
-
-    // Handle connection state changes
-    pc.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state: ${pc.iceConnectionState}`)
-      if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
-        console.log(`ICE connection lost for ${language}, attempting to reconnect...`)
-        reconnect(setTranslation, language)
-      }
-    }
-    
-    pc.onconnectionstatechange = () => {
-      console.log(`Connection state: ${pc.connectionState}`)
-    }
-
-    // Get the guide's offer from the server, including tourCode
-    console.log("Fetching guide's offer with tour Code and language...")
-    try {
-      const offerResponse = await fetch(
-        `/api/tour/join?tourCode=${encodeURIComponent(tourCode)}&language=${encodeURIComponent(language)}`,
-        {
-          credentials: "include",
-        }
-      );
-      
-      console.log("Offer fetch response:", offerResponse.status, offerResponse.statusText)
-      
-      if (!offerResponse.ok) {
-        const errorText = await offerResponse.text()
-        console.error(`Failed to get offer: ${offerResponse.status} ${offerResponse.statusText}`, errorText)
-        throw new Error(`Failed to get offer: ${offerResponse.statusText}`)
-      }
-      
-      const offerData = await offerResponse.json()
-      console.log("Received guide's offer:", offerData)
-      
-      // Set the remote description (guide's offer)
-      await pc.setRemoteDescription(offerData.offer)
-      console.log("Remote description set")
-      
-      // Create an answer
-      console.log("Creating answer...")
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      console.log("Local description set")
-      
-      // Send the answer back to the guide
-      console.log("Sending answer to guide...")
-      // Get the tourId that was stored during initWebRTC
-      const answerTourId = localStorage.getItem('currentTourId');
-      
-      if (!answerTourId) {
-        console.error('No tourId found when sending answer');
-        throw new Error('No tourId found when sending answer');
-      }
-      
-      const answerResponse = await fetch("/api/tour/answer", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          language,
-          answer: pc.localDescription,
-          tourId: answerTourId
-        }),
-        credentials: "include"
-      })
-      
-      if (!answerResponse.ok) {
-        const errorText = await answerResponse.text()
-        console.error(`Failed to send answer: ${answerResponse.status} ${answerResponse.statusText}`, errorText)
-        throw new Error(`Failed to send answer: ${answerResponse.statusText}`)
-      }
-      
-      console.log("Answer sent successfully")
-
-      // Set up handler for ICE candidates
-      pc.onicecandidate = async (event) => {
-        if (event.candidate) {
-          try {
-            await sendIceCandidate(event.candidate, language);
-          } catch (error) {
-            console.error("Failed to send ICE candidate:", error)
-          }
-        }
-      }
-      
-      // Function to send ICE candidates to the server
-      async function sendIceCandidate(candidate: RTCIceCandidate, language: string) {
-        // Get the tourId that was stored during initWebRTC
-        const tourId = localStorage.getItem('currentTourId');
-        
-        if (!tourId) {
-          console.error('No tourId found when sending ICE candidate');
-          return;
-        }
-        
-        await fetch('/api/tour/attendee-ice', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            candidate,
-            language,
-            tourId
-          }),
-          credentials: "include"
-        });
-      }
-      
-      // Get ICE candidates from the guide
-      const getGuideIceCandidates = async () => {
-        try {
-          // Get the tourId that was stored during initWebRTC
-          const tourId = localStorage.getItem('currentTourId')
-          
-          if (!tourId) {
-            console.error('No tourId found when getting guide ICE candidates')
-            return
-          }
-          
-          const iceResponse = await fetch(`/api/tour/guide-ice?language=${encodeURIComponent(language)}&tourId=${encodeURIComponent(tourId)}`, {
-            credentials: "include"
-          })
-          
-          if (iceResponse.ok) {
-            const iceData = await iceResponse.json()
-            if (iceData.candidates && iceData.candidates.length > 0) {
-              for (const candidate of iceData.candidates) {
-                await pc.addIceCandidate(candidate)
-              }
-              console.log(`Added ${iceData.candidates.length} ICE candidates from guide`)
-            }
-          }
-        } catch (error) {
-          console.error("Failed to get guide ICE candidates:", error)
-        }
-      }
-      
-      // Poll for ICE candidates every 2 seconds for 10 seconds
-      let attempts = 0
-      const iceInterval = setInterval(async () => {
-        await getGuideIceCandidates()
-        attempts++
-        if (attempts >= 5) {
-          clearInterval(iceInterval)
-        }
-      }, 2000)
-      
-      // Store connection info, including tourCode and timer ID
-      connections.set(language, { pc, audioEl, tourCode, keyRefreshTimer: keyRefreshTimerId }); // Store timer ID in connections map
-      console.log("WebRTC initialization completed successfully")
-    } catch (error) {
-      console.error("Error in WebRTC offer/answer exchange:", error)
-      throw error
-    }
   } catch (error) {
-    console.error(`WebRTC initialization error for ${language}:`, error)
-    throw error
+      console.error(`WebRTC initialization error for ${language}:`, error);
+      throw error;
   }
 }
 
-async function reconnect(setTranslation: (translation: string) => void, language: string) {
+// ========== Helper Functions ========== //
+
+async function fetchTourOffer(tourCode: string, language: string) {
+  const response = await fetch(`/api/tour/offer?tourCode=${tourCode}&language=${language}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`Failed to join tour: ${response.status} ${response.statusText} ${errorText}`);
+    throw new Error('Failed to join tour');
+  }
+
+  const data = await response.json();
+  if (!data.offer) await pollForOffer(tourCode, language);
+
+  return data;
+}
+
+async function pollForOffer(tourCode: string, language: string) {
+  let attempts = 0;
+  while (attempts++ < 12) { // 1 minute max
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      const response = await fetch(`/api/tour/offer?tourCode=${tourCode}&language=${language}`);
+      if (response.ok) {
+          const data = await response.json();
+          if (data.offer) return data;
+      }
+  }
+  throw new Error('Timeout waiting for offer');
+}
+
+function setupKeyRefresh(language: string): NodeJS.Timeout {
+  return setInterval(async () => {
+      try {
+          const response = await fetch("/api/session", { credentials: "include" });
+          if (response.ok) {
+              const data = await response.json();
+              console.log(`Key refreshed for ${language}`);
+          }
+      } catch (error) {
+          console.error(`Key refresh failed for ${language}:`, error);
+      }
+  }, 45000);
+}
+
+function createPeerConnection(language: string, tourCode: string, setTranslation: (text: string) => void) {
+  const pc = new RTCPeerConnection({
+      iceServers: [
+          { urls: 'turn:192.168.245.82:3478', username: 'username1', credential: 'password1' },
+          { urls: 'turn:192.168.245.82:443', username: 'username1', credential: 'password1' },
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+          { urls: "stun:stun3.l.google.com:19302" },
+          { urls: "stun:stun4.l.google.com:19302" }
+      ]
+  });
+
+  const audioEl = new Audio();
+  audioEl.autoplay = true;
+
+  // Connection state handlers
+  pc.oniceconnectionstatechange = () => {
+      if (["disconnected", "failed"].includes(pc.iceConnectionState)) {
+          reconnect(setTranslation, language);
+      }
+  };
+
+  return { pc, audioEl };
+}
+
+function setupMediaHandlers(pc: RTCPeerConnection, audioEl: HTMLAudioElement, setTranslation: (text: string) => void) {
+  // Media track handler
+  pc.ontrack = (event) => {
+      if (event.track.kind === 'audio') {
+          audioEl.srcObject = event.streams[0];
+          audioEl.play().catch(e => console.error("Autoplay blocked:", e));
+      }
+  };
+
+  // Data channel handler
+  pc.ondatachannel = (event) => {
+      const dc = event.channel;
+      dc.onmessage = (e) => handleDataMessage(e, setTranslation);
+  };
+}
+
+function handleDataMessage(event: MessageEvent, setTranslation: (text: string) => void) {
   try {
-    const connection = connections.get(language);
-    if (connection) {
-      const tourCode = connection.tourCode; // Retrieve tourCode for reconnection
-      connection.pc.close();
-      connections.delete(language);
-      await initWebRTC(setTranslation, language, tourCode); // Pass tourCode to initWebRTC
-    }
+      const message = JSON.parse(event.data);
+      if (message.type.includes('translation') && message.text) {
+          setTranslation(message.text);
+      }
   } catch (error) {
-    console.error(`Reconnection failed for ${language}:`, error)
-    // Implement exponential backoff or show an error to the user
+      console.error("Message handling error:", error);
+  }
+}
+
+async function completeSignaling(pc: RTCPeerConnection, language: string, tourId: string) {
+  // Set remote description
+  const offerResponse = await fetch(`/api/tour/join?tourCode=${encodeURIComponent(tourId)}&language=${encodeURIComponent(language)}`);
+  const offerData = await offerResponse.json();
+  await pc.setRemoteDescription(offerData.offer);
+
+  // Create and set local answer
+  const answer = await pc.createAnswer({
+      offerToReceiveAudio: true,
+      voiceActivityDetection: false
+  });
+  await pc.setLocalDescription(optimizeSdpForOpus(answer));
+
+  // Send answer to server
+  await fetch("/api/tour/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+          language,
+          answer: pc.localDescription,
+          tourId
+      }),
+      credentials: "include"
+  });
+
+  // ICE candidate handling
+  pc.onicecandidate = (event) => {
+      if (event.candidate) {
+          sendIceCandidate(event.candidate, language, tourId);
+      }
+  };
+}
+
+function optimizeSdpForOpus(description: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
+  if (description.type === 'answer' || description.type === 'offer') {
+      return {
+          type: description.type,
+          sdp: description.sdp?.replace(/a=rtpmap:(\d+) opus\/48000/i, 
+              'a=rtpmap:$1 opus/48000/2\r\na=fmtp:$1 stereo=1; maxplaybackrate=48000')
+      };
+  }
+  return description;
+}
+
+async function sendIceCandidate(candidate: RTCIceCandidate, language: string, tourId: string) {
+  await fetch('/api/tour/attendee-ice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate, language, tourId }),
+      credentials: "include"
+  });
+}
+
+async function reconnect(setTranslation: (text: string) => void, language: string) {
+  const connection = connections.get(language);
+  if (!connection) return;
+
+  try {
+      connection.pc.close();
+      if (connection.keyRefreshTimer) clearInterval(connection.keyRefreshTimer);
+      
+      await initWebRTC(setTranslation, language, connection.tourCode);
+  } catch (error) {
+      console.error(`Reconnection failed for ${language}:`, error);
   }
 }
 
 export function cleanupWebRTC() {
-  for (const [language, connection] of connections) {
-    console.log(`Closing WebRTC connection for language: ${language}`);
-    connection.pc.close();
-    if (connection.keyRefreshTimer) { // Check if timer exists before clearing
-        clearInterval(connection.keyRefreshTimer); // Clear the refresh timer
-        console.log(`Cleared key refresh timer for language: ${language}`);
-    }
+  connections.forEach((connection, language) => {
+      connection.pc.close();
+      if (connection.keyRefreshTimer) clearInterval(connection.keyRefreshTimer);
+      if (connection.audioContext) connection.audioContext.close();
+  });
+  connections.clear();
+}
+
+function cleanupConnection(language: string) {
+  const connection = connections.get(language);
+  if (connection) {
+      connection.pc.close();
+      if (connection.keyRefreshTimer) clearInterval(connection.keyRefreshTimer);
+      connections.delete(language);
   }
-  connections.clear()
 }
