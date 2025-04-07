@@ -21,9 +21,17 @@ function Spinner() {
 
 export default function GuidePage() {
   const router = useRouter()
-  const [translation, setTranslation] = useState<string>("Waiting for translation...")
-  const [language, setLanguage] = useState<string>("English") // Default to English
-  const [attendees, setAttendees] = useState<string[]>([])
+  const [translations, setTranslations] = useState<Record<string, string>>({})
+  const [primaryLanguage, setPrimaryLanguage] = useState<string>("English")
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["English"])
+  interface Attendee {
+    id: string;
+    name: string;
+    language: string;
+    joinTime: string;
+  }
+  
+  const [attendees, setAttendees] = useState<Attendee[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null);
   const [isTourActive, setIsTourActive] = useState<boolean>(false);
@@ -39,12 +47,15 @@ export default function GuidePage() {
       console.log("=== STARTING TOUR ===")
       setIsLoading(true)
       setError(null)
-      console.log("Sending tour start request with language:", language)
+      console.log("Sending tour start request with languages:", selectedLanguages, "primary:", primaryLanguage)
       const response = await fetch("/api/tour/start", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language })
+        body: JSON.stringify({ 
+          languages: selectedLanguages,
+          primaryLanguage 
+        })
       })
 
       console.log("Tour start response:", response.status, response.statusText)
@@ -69,7 +80,30 @@ export default function GuidePage() {
 
       // Initialize WebRTC only after tour has successfully started.
       console.log("Initializing WebRTC connection...")
-      await initGuideWebRTC(setTranslation, language, setAttendees, tourData.tourId)
+      // Create wrapper for attendee updates
+      const handleAttendeeUpdates = (attendeeIds: string[]) => {
+        // Convert string IDs to placeholder Attendee objects
+        const attendeeObjects = attendeeIds.map(id => ({
+          id,
+          name: 'Loading...',
+          language: primaryLanguage,
+          joinTime: new Date().toISOString()
+        }));
+        setAttendees(attendeeObjects);
+      };
+
+      // Initialize WebRTC for each selected language
+      for (const language of selectedLanguages) {
+        // Ensure proper case for language names to match audio file naming
+        const normalizedLanguage = language.charAt(0).toUpperCase() + language.slice(1).toLowerCase();
+        const handleTranslationUpdate = (text: string) => {
+          setTranslations(prev => ({
+            ...prev,
+            [normalizedLanguage]: text
+          }))
+        }
+        await initGuideWebRTC(handleTranslationUpdate, normalizedLanguage, handleAttendeeUpdates, tourData.tourId)
+      }
       console.log("WebRTC initialized successfully")
       
       setIsTourActive(true)
@@ -98,8 +132,8 @@ export default function GuidePage() {
       setIsTourEnding(true);
       cleanupGuideWebRTC()
       setIsTourActive(false)
-      setAttendees([])
-      setTranslation("Waiting for translation...")
+      setAttendees([] as Attendee[])
+      setTranslations({})
       setTourCode(null)
     } catch (err) {
       console.error("Error ending tour:", err)
@@ -145,7 +179,14 @@ export default function GuidePage() {
         cleanupGuideWebRTC()
       }
     }
-  }, [isTourActive])
+  }, [isTourActive]);
+
+  // Keep primary language in selected languages
+  useEffect(() => {
+    if (!selectedLanguages.includes(primaryLanguage)) {
+      setSelectedLanguages(prev => [...prev, primaryLanguage]);
+    }
+  }, [primaryLanguage, selectedLanguages]);
 
   if (isLoading) {
     return (
@@ -170,12 +211,43 @@ export default function GuidePage() {
       ) : (
         <>
           <div className="flex flex-col items-center gap-4 mb-6">
-            <LanguageSelector
-              language={language}
-              setLanguage={setLanguage}
-              connectToGuide={() => {}}
-              disabled={isTourActive} // disable when tour is active
-            />
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Primary Language</label>
+                <LanguageSelector
+                  language={primaryLanguage}
+                  setLanguage={setPrimaryLanguage}
+                  connectToGuide={() => {}}
+                  disabled={isTourActive}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-1">Additional Languages (Optional)</label>
+                <div className="flex flex-wrap gap-2">
+                  {["French", "German", "Spanish", "Italian", "Dutch", "Portuguese"].map(lang => (
+                    <label key={lang} className="inline-flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedLanguages.includes(lang)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedLanguages(prev => [...prev, lang.charAt(0).toUpperCase() + lang.slice(1).toLowerCase()]);
+                          } else {
+                            setSelectedLanguages(prev => 
+                              prev.filter(l => l !== lang && l !== primaryLanguage)
+                            );
+                          }
+                        }}
+                        disabled={isTourActive || lang === primaryLanguage}
+                        className="form-checkbox h-4 w-4 text-blue-600"
+                      />
+                      <span className="ml-2 text-sm">{lang}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
              {/* Tour Code Display */}
             {tourCreated && tourCode && (
               <div className="flex flex-col items-center mb-6">
@@ -198,10 +270,23 @@ export default function GuidePage() {
             )}
 
           </div>
-          <TranslationOutput translation={translation} />
+          <div className="w-full max-w-4xl space-y-4">
+            {Object.entries(translations).map(([language, text]) => (
+              <div key={language} className="bg-white p-4 rounded-lg shadow">
+                <h3 className="text-lg font-semibold mb-2">{language}</h3>
+                <TranslationOutput translation={text} />
+              </div>
+            ))}
+            {Object.keys(translations).length === 0 && (
+              <div className="text-center text-gray-500">
+                Waiting for translations...
+              </div>
+            )}
+          </div>
           <TourControls 
             onStartTour={handleStartTour} 
             onEndTour={handleEndTour}
+            isTourActive={isTourActive}
           />
           <AttendeeList attendees={attendees} />
         </>

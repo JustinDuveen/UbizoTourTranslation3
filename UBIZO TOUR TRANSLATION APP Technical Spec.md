@@ -214,3 +214,96 @@ ubizo-app/
     ├── docker-compose.yml    # TURN + signaling
     └── k8s/                  # Kubernetes manifests
 This spec provides a complete, production-ready blueprint for the Ubizo app.
+
+
+$$$$$
+Based on the code analysis, here's how the translation flow works from guide to attendees:
+
+Guide's Audio Capture & Processing:
+Guide's Microphone
+
+AudioMonitor
+
+TranslationHandler
+
+WebRTC Data Channel
+
+OpenAI API
+
+Translation Distribution Flow:
+Language 1
+
+Language 2
+
+Language N
+
+OpenAI Translation
+
+Guide's WebRTC
+
+Redis Channel
+
+Tour-specific Channel
+
+Attendee 1
+
+Attendee 2
+
+Attendee N
+
+The process works as follows:
+
+Guide's Audio Capture:
+
+Audio is captured in high quality (16kHz mono)
+TranslationHandler processes audio into 16-bit PCM
+Audio data is sent through WebRTC to OpenAI
+OpenAI Translation:
+
+OpenAI receives audio and returns translations
+Translations come as delta updates via data channel
+Guide's WebRTC handles these in onmessage event
+Redis Distribution:
+
+Each tour has language-specific Redis channels
+Format: tour:{tourId}:{language}:answers
+Translations are pushed to these channels
+Each attendee subscribes to their language channel
+Attendee Reception:
+
+Attendees connect via WebRTC for their language
+They receive translations through data channel
+TranslationOutput component displays the text
+Audio verification ensures connection quality
+This creates a scalable one-to-many system where:
+
+One guide can broadcast to multiple languages
+Each language has its own Redis channel
+Attendees receive only their selected language
+System handles reconnections and failures gracefully
+
+
+######
+
+Redis Schema Updates:
+tour:{tourId}:supported_languages - Set of supported languages
+tour:{tourId}:attendees - Hash of attendee details including names
+tour:{tourId}:language:{lang}:attendees - Set of attendees per language
+WebRTC Connection Flow:
+Supported
+
+Attendee Joins
+
+Submit Name & Language
+
+Check Language Support
+
+Store Attendee Info
+
+Initialize WebRTC
+
+Guide Receives Join Event
+
+Update Attendee List
+
+

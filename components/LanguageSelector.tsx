@@ -4,8 +4,10 @@ interface LanguageSelectorProps {
   language: string;
   setLanguage: (language: string) => void;
   options?: string[];
-  connectToGuide?: () => void; // Add connectToGuide prop
-  disabled?: boolean; // Optional disabled prop
+  connectToGuide?: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  placeholder?: string;
 }
 
 /**
@@ -23,8 +25,16 @@ interface LanguageSelectorProps {
  * When a new language is selected, it calls the setLanguage function with the new value,
  * and then calls the connectToGuide function to initiate the WebRTC connection.
  */
-export default function LanguageSelector({ language, setLanguage, options, connectToGuide }: LanguageSelectorProps) {
-  // Default options if none provided - using languages supported by OpenAI Realtime API
+export default function LanguageSelector({ 
+  language, 
+  setLanguage, 
+  options, 
+  connectToGuide,
+  disabled,
+  loading,
+  placeholder = "Select language"
+}: LanguageSelectorProps) {
+  // Default options if none provided
   const languageOptions = options || ["English", "French", "German", "Spanish", "Italian", "Dutch", "Portuguese", "Japanese", "Chinese", "Korean"];
 
   const handleLanguageChange = (newLanguage: string) => {
@@ -34,13 +44,19 @@ export default function LanguageSelector({ language, setLanguage, options, conne
   
   return (
     <div className="mb-4">
-      <Select value={language} onValueChange={handleLanguageChange}>
-        <SelectTrigger className="w-[180px]">
-          <SelectValue placeholder="Select language" />
+      <Select 
+        value={language} 
+        onValueChange={handleLanguageChange}
+        disabled={disabled || loading}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={loading ? "Loading..." : placeholder} />
         </SelectTrigger>
         <SelectContent>
           {languageOptions.map((lang) => (
-            <SelectItem key={lang} value={lang}>{lang}</SelectItem>
+            <SelectItem key={lang.toLowerCase()} value={lang.toLowerCase()}>
+              {lang}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>

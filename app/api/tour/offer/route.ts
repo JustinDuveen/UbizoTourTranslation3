@@ -1,4 +1,4 @@
-// File: app/api/tour/offer/route.ts
+ // File: app/api/tour/offer/route.ts
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { verifyToken } from "@/lib/auth";
@@ -44,9 +44,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No active tour found" }, { status: 404 });
     }
 
-    // Store the offer in Redis under a composite key
-    const offerKey = `tour:${tourId}:offer:${language}`;
-    await redis.set(offerKey, JSON.stringify(offer), "EX", 300); // 5-minute expiry
+    // Store the offer in Redis under a composite key with longer expiry
+    const offerKey = `tour:${tourId}:offer:${language}`;
+    await redis.set(offerKey, JSON.stringify(offer), "EX", 7200); // 2-hour expiry
 
     return NextResponse.json({ message: "Offer stored successfully" });
   } catch (error) {
@@ -72,48 +72,80 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Extract and validate query parameters
-    const { searchParams } = new URL(request.url);
-    const language = searchParams.get("language");
-    if (!language) {
-      return NextResponse.json({ error: "Missing language parameter" }, { status: 400 });
-    }
-    const tourCode = searchParams.get("tourCode");
-    if (!tourCode) {
-      return NextResponse.json({ error: "Missing tourCode parameter" }, { status: 400 });
-    }
+    // Extract and validate basic parameters
+    const { searchParams } = new URL(request.url);
+    const language = searchParams.get("language")?.toLowerCase();
+    const tourCode = searchParams.get("tourCode");
+    const attendeeName = searchParams.get("attendeeName");
 
-    // Get Redis client and retrieve tourId from tourCode
-    const redis = await getRedisClient();
-    const tourId = await redis.get(`tour_codes:${tourCode}`);
-    if (!tourId) {
-      return NextResponse.json({ error: "No active tour found for this guide" }, { status: 404 });
-    }
+    if (!language || !tourCode) {
+      return NextResponse.json({ 
+        error: "Missing required parameters",
+        details: {
+          language: !language,
+          tourCode: !tourCode
+        }
+      }, { status: 400 });
+    }
 
-    // Validate tour existence
-    const tourExists = await redis.exists(`tour:${tourId}`);
-    if (!tourExists) {
-      return NextResponse.json({ error: "Invalid tour code" }, { status: 404 });
-    }
+    // Get Redis client and retrieve tourId from tourCode
+    const redis = await getRedisClient();
+    const tourId = await redis.get(`tour_codes:${tourCode}`);
+    if (!tourId) {
+      return NextResponse.json({ error: "No active tour found" }, { status: 404 });
+    }
 
-    // Retrieve the offer from Redis
-    const offerKey = `tour:${tourId}:offer:${language}`;
-    const offerJson = await redis.get(offerKey);
-    if (!offerJson) {
-      return NextResponse.json({ error: "Offer not found for this language" }, { status: 404 });
-    }
+    // Check if language is supported for this tour
+    const isLanguageSupported = await redis.sIsMember(`tour:${tourId}:supported_languages`, language);
+    if (!isLanguageSupported) {
+      return NextResponse.json({ error: "Language not supported for this tour" }, { status: 404 });
+    }
 
-    // Check if the offer has expired
-    const ttl = await redis.ttl(offerKey);
-    if (ttl < 0) {
-      return NextResponse.json({ error: "Offer has expired" }, { status: 404 });
-    }
+    // Retrieve the offer from Redis
+    const offerKey = `tour:${tourId}:offer:${language}`;
+    const offerJson = await redis.get(offerKey);
+    if (!offerJson) {
+      return NextResponse.json({ error: "Offer not found for this language" }, { status: 404 });
+    }
 
-    // Register this attendee with the tour (if not already registered)
-    const isRegistered = await redis.sismember(`tour:${tourId}:attendees`, user.id);
-    if (!isRegistered) {
-      await redis.sadd(`tour:${tourId}:attendees`, user.id);
-    }
+    // Only validate attendeeName if we have a valid offer
+    if (!attendeeName?.trim()) {
+      return NextResponse.json({ 
+        error: "Missing required parameter: attendeeName"
+      }, { status: 400 });
+    }
+
+    // Register this attendee with the tour
+    const attendeeKey = `tour:${tourId}:attendee:${user.id}`;
+    const languageKey = `tour:${tourId}:language:${language}:attendees`;
+    
+    // Store attendee details
+    await redis.hSet(attendeeKey, {
+      name: attendeeName,
+      language,
+      joinTime: new Date().toISOString(),
+      userId: user.id
+    });
+
+    // Add to language-specific attendee set
+    await redis.sAdd(languageKey, user.id);
+
+    // Add to general attendees set if not already registered
+    const isRegistered = await redis.sismember(`tour:${tourId}:attendees`, user.id);
+    if (!isRegistered) {
+      await redis.sAdd(`tour:${tourId}:attendees`, user.id);
+      
+      // Publish attendee joined event
+      await redis.publish(`tour:${tourId}:events`, JSON.stringify({
+        type: 'attendee_joined',
+        attendee: {
+          id: user.id,
+          name: attendeeName,
+          language,
+          joinTime: new Date().toISOString()
+        }
+      }));
+    }
 
     return NextResponse.json({ offer: JSON.parse(offerJson) });
   } catch (error) {

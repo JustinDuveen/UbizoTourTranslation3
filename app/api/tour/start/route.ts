@@ -32,37 +32,44 @@ export async function POST(request: Request) {
 
     // Parse request body
     const body = await request.json()
-    const { language } = body
+    const { languages, primaryLanguage } = body
 
-    if (!language) {
-      return NextResponse.json({ error: "Missing language parameter" }, { status: 400 })
+    if (!languages?.length || !primaryLanguage) {
+      return NextResponse.json({ error: "Missing languages or primary language" }, { status: 400 })
     }
 
-    // Store language map first (before other tour data)
-    await redis.sendCommand([
-      'SADD',
-      `tour:${tourId}:supported_languages`,
-      'french', 'german', 'dutch', 'spanish', 'portuguese'
-    ]);
-    
+    // Normalize languages to lowercase
+    const normalizedLanguages = languages.map((lang: string) => lang.toLowerCase())
+    const normalizedPrimaryLang = primaryLanguage.toLowerCase()
 
-    // Also store primary language separately
-    await redis.set(`tour:${tourId}:primary_language`, language.toLowerCase());
+    // Validate primary language is in selected languages
+    if (!normalizedLanguages.includes(normalizedPrimaryLang)) {
+      return NextResponse.json({ 
+        error: "Primary language must be one of the selected languages" 
+      }, { status: 400 })
+    }
 
+    // Store supported languages
+    await redis.sAdd(`tour:${tourId}:supported_languages`, ...normalizedLanguages);
+
+    // Store primary language
+    await redis.set(`tour:${tourId}:primary_language`, normalizedPrimaryLang);
 
     // Store tour info in Redis
     await redis.set(`tour:${tourId}`, JSON.stringify({
       guideId: user.id,
       startTime: new Date().toISOString(),
       status: "active",
-      language: language, // Store the language
+      primaryLanguage: normalizedPrimaryLang,
+      languages: normalizedLanguages
     }))
 
-    // Store tour offer in Redis for the specified language (normalized to lowercase)
-    // The offer should be the localDescription of the RTCPeerConnection
-    // For now, I will leave it as is, and the guide will need to update the offer later
-    await redis.set(`tour:${tourId}:offer:${language.toLowerCase()}`, JSON.stringify({
-      offer: `Initialized offer for ${language}`
+    // Initialize offers for all selected languages
+    await Promise.all(normalizedLanguages.map(async (lang: string) => {
+      await redis.set(`tour:${tourId}:offer:${lang}`, JSON.stringify({
+        offer: `Initialized offer for ${lang}`,
+        status: 'pending'
+      }))
     }))
     
     // Store tour ID in guide's active tours

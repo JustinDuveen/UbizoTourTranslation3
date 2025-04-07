@@ -39,27 +39,31 @@ function getCookie(name: string): string | null {
 export default function AttendeePage() {
   const router = useRouter()
   const [translation, setTranslation] = useState<string>("")
-  const [language, setLanguage] = useState<string>("french")
+  const [language, setLanguage] = useState<string>("")
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [noTourError, setNoTourError] = useState<string | null>(null)
   const [tourCode, setTourCode] = useState<string>("")
   const [isAutoConnecting, setIsAutoConnecting] = useState(false)
+  const [name, setName] = useState<string>("")
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>([])
+  const [isLoadingLanguages, setIsLoadingLanguages] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   // Enhanced connection handler with retry logic
-  const connectToGuide = useCallback(async (tourCode: string, selectedLanguage: string, attempt = 1) => {
+  const connectToGuide = useCallback(async (tourCode: string, selectedLanguage: string, attendeeName: string, attempt: number = 1) => {
     const currentTourCode = tourCode
     abortControllerRef.current = new AbortController()
     
     try {
       setConnectionState('connecting')
-      await initWebRTC(
-        (text) => setTranslation(DOMPurify.sanitize(text)),
-        selectedLanguage.toLowerCase(),
+      await initWebRTC({
+        onTranslation: (text) => setTranslation(DOMPurify.sanitize(text)),
+        language: selectedLanguage.toLowerCase(),
         tourCode,
-        { signal: abortControllerRef.current.signal }
-      )
+        attendeeName,
+        signal: abortControllerRef.current.signal
+      })
       setConnectionState('connected')
       setIsAutoConnecting(false)
     } catch (err) {
@@ -69,14 +73,60 @@ export default function AttendeePage() {
       if (attempt < 3) {
         console.log(`Retrying connection (attempt ${attempt + 1})...`)
         await new Promise(resolve => setTimeout(resolve, 2000 * attempt))
-        return connectToGuide(tourCode, selectedLanguage, attempt + 1)
+        return connectToGuide(tourCode, selectedLanguage, attendeeName, attempt + 1)
       }
 
       setConnectionState('failed')
       setIsAutoConnecting(false)
       throw err
     }
-  }, [tourCode])
+  }, [])
+
+  // Fetch available languages when tour code is entered
+  const fetchAvailableLanguages = useCallback(async (code: string) => {
+    if (!code?.match(/^[A-Z0-9]{6}$/)) return;
+    
+    setIsLoadingLanguages(true);
+    try {
+      const response = await fetch(`/api/tour/languages?tourCode=${code}`, {
+        credentials: 'include' // Add credentials to include auth cookies
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        if (response.status === 404) {
+          setNoTourError("Invalid Tour Code or no active tour");
+        } else if (response.status === 401) {
+          setError("Please log in as an attendee to join a tour");
+          router.push('/login');
+        } else {
+          setError(data.error || "Failed to fetch available languages");
+        }
+        return;
+      }
+      
+      const data = await response.json();
+      setAvailableLanguages(data.languages || []);
+      
+      // If only one language is available, auto-select it
+      if (data.languages?.length === 1) {
+        setLanguage(data.languages[0]);
+      }
+    } catch (err) {
+      console.error('Error fetching languages:', err);
+    } finally {
+      setIsLoadingLanguages(false);
+    }
+  }, []);
+
+  // Update available languages when tour code changes
+  useEffect(() => {
+    if (tourCode.length === 6) {
+      fetchAvailableLanguages(tourCode);
+    } else {
+      setAvailableLanguages([]);
+      setLanguage('');
+    }
+  }, [tourCode, fetchAvailableLanguages]);
 
   const handleConnect = useCallback(async () => {
     if (!tourCode?.match(/^[A-Z0-9]{6}$/)) {
@@ -89,11 +139,18 @@ export default function AttendeePage() {
       return
     }
 
+    if (!name.trim()) {
+      setError('Please enter your name')
+      return
+    }
+
     setError(null)
     setNoTourError(null)
 
     try {
-      await connectToGuide(tourCode, language)
+      // Store name in localStorage for reconnections
+      localStorage.setItem('attendeeName', name.trim());
+      await connectToGuide(tourCode, language, name.trim())
     } catch (err) {
       console.error('Connection error:', err)
       
@@ -102,8 +159,8 @@ export default function AttendeePage() {
             err.message.includes("Invalid tour code")) {
           setNoTourError("Invalid Tour Code or no active tour")
         } else if (err.message.includes("Language not supported")) {
-          const supportedLangs = err.message.match(/supportedLanguages:\[(.*?)\]/)?.[1]
-          setError(`Language not supported. Available: ${supportedLangs || 'none'}`)
+          await fetchAvailableLanguages(tourCode)
+          setError(`Language not supported. Please select an available language.`)
         } else {
           setError(err.message || 'Failed to connect. Please check your code and try again.')
         }
@@ -111,7 +168,7 @@ export default function AttendeePage() {
         setError('An unknown error occurred')
       }
     }
-  }, [tourCode, language, connectToGuide])
+  }, [tourCode, language, name, connectToGuide, fetchAvailableLanguages])
 
   // Enhanced auto-connect from URL params
   useEffect(() => {
@@ -210,13 +267,28 @@ export default function AttendeePage() {
         <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full">
           <div className="space-y-4">
             <div>
+              <label htmlFor="name" className="block text-sm font-medium mb-1">
+                Your Name
+              </label>
+              <input
+                type="text"
+                id="name"
+                autoFocus
+                className="w-full p-3 border rounded-md focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
+              />
+            </div>
+
+            <div>
               <label htmlFor="tourCode" className="block text-sm font-medium mb-1">
                 Tour Code
               </label>
               <input
                 type="text"
                 id="tourCode"
-                autoFocus
                 className="w-full p-3 border rounded-md focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter 6-digit code"
                 value={tourCode}
@@ -234,9 +306,16 @@ export default function AttendeePage() {
             <LanguageSelector
               language={language}
               setLanguage={(lang) => setLanguage(lang.toLowerCase())}
-              options={["French", "German", "Spanish", "Italian", "Dutch", 
-                      "Portuguese", "Japanese", "Chinese", "Korean"]}
-              disabled={connectionState === 'connecting'}
+              options={availableLanguages.map(lang => 
+                lang.charAt(0).toUpperCase() + lang.slice(1)
+              )}
+              disabled={connectionState === 'connecting' || isLoadingLanguages}
+              loading={isLoadingLanguages}
+              placeholder={
+                isLoadingLanguages ? "Loading languages..." :
+                availableLanguages.length === 0 && tourCode.length === 6 ? 
+                "No languages available" : "Select language"
+              }
             />
 
             <Button
