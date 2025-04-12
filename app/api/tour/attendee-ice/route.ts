@@ -24,15 +24,15 @@ export async function POST(request: Request) {
     }
 
     // Get Redis client
-    const redis = await getRedisClient()
+    const redisClient = await getRedisClient()
 
     // Store the ICE candidate in Redis
-    await redis.rpush(`tour:${tourId}:ice:attendee:${language}:${user.id}`, JSON.stringify(candidate))
-    
+    await redisClient.rPush(`tour:${tourId}:ice:attendee:${language}:${user.id}`, JSON.stringify(candidate))
+
     return NextResponse.json({ message: "Attendee ICE candidate stored successfully" })
   } catch (error) {
     console.error("Error storing attendee ICE candidate:", error)
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: "Failed to store attendee ICE candidate",
       message: error instanceof Error ? error.message : String(error)
     }, { status: 500 })
@@ -61,25 +61,25 @@ export async function GET(request: Request) {
     }
 
     // Get Redis client
-    const redis = await getRedisClient()
-    
+    const redisClient = await getRedisClient()
+
     // Get the active tour ID for this guide
-    const tourId = await redis.get(`guide:${user.id}:active_tour`)
-    
+    const tourId = await redisClient.get(`guide:${user.id}:active_tour`)
+
     if (!tourId) {
       return NextResponse.json({ error: "No active tour found" }, { status: 404 })
     }
-    
+
     // Get all ICE candidates for this attendee
-    const iceCandidatesJson = await redis.lrange(`tour:${tourId}:ice:attendee:${language}:${attendeeId}`, 0, -1)
-    
+    const iceCandidatesJson = await redisClient.lRange(`tour:${tourId}:ice:attendee:${language}:${attendeeId}`, 0, -1)
+
     // Parse the candidates
     const candidates = iceCandidatesJson.map((json: string) => JSON.parse(json))
-    
+
     return NextResponse.json({ candidates })
   } catch (error) {
     console.error("Error retrieving attendee ICE candidates:", error)
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: "Failed to retrieve attendee ICE candidates",
       message: error instanceof Error ? error.message : String(error)
     }, { status: 500 })

@@ -1,4 +1,5 @@
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+import { normalizeLanguageForStorage, formatLanguageForDisplay } from "@/lib/languageUtils"
 
 interface LanguageSelectorProps {
   language: string;
@@ -25,10 +26,10 @@ interface LanguageSelectorProps {
  * When a new language is selected, it calls the setLanguage function with the new value,
  * and then calls the connectToGuide function to initiate the WebRTC connection.
  */
-export default function LanguageSelector({ 
-  language, 
-  setLanguage, 
-  options, 
+export default function LanguageSelector({
+  language,
+  setLanguage,
+  options,
   connectToGuide,
   disabled,
   loading,
@@ -38,14 +39,16 @@ export default function LanguageSelector({
   const languageOptions = options || ["English", "French", "German", "Spanish", "Italian", "Dutch", "Portuguese", "Japanese", "Chinese", "Korean"];
 
   const handleLanguageChange = (newLanguage: string) => {
-    setLanguage(newLanguage);
+    // Normalize the language for storage
+    const normalizedLanguage = normalizeLanguageForStorage(newLanguage);
+    setLanguage(normalizedLanguage);
     connectToGuide?.(); // Reconnect with the new language
   };
-  
+
   return (
     <div className="mb-4">
-      <Select 
-        value={language} 
+      <Select
+        value={language}
         onValueChange={handleLanguageChange}
         disabled={disabled || loading}
       >
@@ -53,11 +56,15 @@ export default function LanguageSelector({
           <SelectValue placeholder={loading ? "Loading..." : placeholder} />
         </SelectTrigger>
         <SelectContent>
-          {languageOptions.map((lang) => (
-            <SelectItem key={lang.toLowerCase()} value={lang.toLowerCase()}>
-              {lang}
-            </SelectItem>
-          ))}
+          {languageOptions.map((lang) => {
+            // For display languages, use as is, but normalize for the value
+            const normalizedLang = normalizeLanguageForStorage(lang);
+            return (
+              <SelectItem key={normalizedLang} value={normalizedLang}>
+                {lang}
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
     </div>

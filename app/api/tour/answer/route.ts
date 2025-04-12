@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRedisClient } from "@/lib/redis";
+import { normalizeLanguageForStorage } from "@/lib/languageUtils";
 
 // Handle requests for tour answers
 
@@ -7,7 +8,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const tourId = searchParams.get("tourId");
-    const language = searchParams.get("language");
+    const languageParam = searchParams.get("language");
+    const language = languageParam ? normalizeLanguageForStorage(languageParam) : null;
 
     if (!tourId || !language) {
       return NextResponse.json(
@@ -33,7 +35,8 @@ export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const tourId = searchParams.get("tourId");
-    const language = searchParams.get("language");
+    const languageParam = searchParams.get("language");
+    const language = languageParam ? normalizeLanguageForStorage(languageParam) : null;
     const body = await request.json(); // Extract the request body
 
     if (!tourId || !language) {

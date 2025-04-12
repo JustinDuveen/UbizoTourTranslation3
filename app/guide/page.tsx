@@ -30,7 +30,7 @@ export default function GuidePage() {
     language: string;
     joinTime: string;
   }
-  
+
   const [attendees, setAttendees] = useState<Attendee[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null);
@@ -47,19 +47,26 @@ export default function GuidePage() {
       console.log("=== STARTING TOUR ===")
       setIsLoading(true)
       setError(null)
-      console.log("Sending tour start request with languages:", selectedLanguages, "primary:", primaryLanguage)
+
+      // Make sure primary language is included in selected languages
+      let finalSelectedLanguages = [...selectedLanguages];
+      if (!finalSelectedLanguages.includes(primaryLanguage)) {
+        finalSelectedLanguages.push(primaryLanguage);
+      }
+
+      console.log("Sending tour start request with languages:", finalSelectedLanguages, "primary:", primaryLanguage)
       const response = await fetch("/api/tour/start", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          languages: selectedLanguages,
-          primaryLanguage 
+        body: JSON.stringify({
+          languages: finalSelectedLanguages,
+          primaryLanguage
         })
       })
 
       console.log("Tour start response:", response.status, response.statusText)
-      
+
       if (!response.ok) {
         const data = await response.json()
         console.error("Tour start error:", data)
@@ -72,7 +79,7 @@ export default function GuidePage() {
         }
         throw new Error(data.error || "Failed to start tour")
       }
-      
+
       const tourData = await response.json()
       console.log("Tour started successfully:", tourData)
       setTourCode(tourData.tourCode)
@@ -93,9 +100,12 @@ export default function GuidePage() {
       };
 
       // Initialize WebRTC for each selected language
-      for (const language of selectedLanguages) {
+      console.log("Initializing WebRTC for languages:", finalSelectedLanguages);
+      for (const language of finalSelectedLanguages) {
         // Ensure proper case for language names to match audio file naming
         const normalizedLanguage = language.charAt(0).toUpperCase() + language.slice(1).toLowerCase();
+        console.log(`Initializing WebRTC for language: ${normalizedLanguage}`);
+
         const handleTranslationUpdate = (text: string) => {
           setTranslations(prev => ({
             ...prev,
@@ -103,9 +113,10 @@ export default function GuidePage() {
           }))
         }
         await initGuideWebRTC(handleTranslationUpdate, normalizedLanguage, handleAttendeeUpdates, tourData.tourId)
+        console.log(`WebRTC initialized for ${normalizedLanguage}`);
       }
-      console.log("WebRTC initialized successfully")
-      
+      console.log("WebRTC initialized successfully for all languages")
+
       setIsTourActive(true)
       setIsLoading(false)
     } catch (err: any) {
@@ -117,7 +128,7 @@ export default function GuidePage() {
 
   const handleEndTour = async () => {
     try {
-      const response = await fetch("/api/tour/end", { 
+      const response = await fetch("/api/tour/end", {
         method: "POST",
         credentials: "include"
       })
@@ -199,7 +210,7 @@ export default function GuidePage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-gray-50">
       <h1 className="text-4xl font-bold mb-6">Tour Guide Interface</h1>
-      
+
       {error ? (
         <Alert variant="destructive" className="mb-6 max-w-lg">
           <AlertCircle className="h-4 w-4 mr-2" />
@@ -221,7 +232,7 @@ export default function GuidePage() {
                   disabled={isTourActive}
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium mb-1">Additional Languages (Optional)</label>
                 <div className="flex flex-wrap gap-2">
@@ -229,14 +240,24 @@ export default function GuidePage() {
                     <label key={lang} className="inline-flex items-center">
                       <input
                         type="checkbox"
-                        checked={selectedLanguages.includes(lang)}
+                        checked={selectedLanguages.map(l => l.toLowerCase()).includes(lang.toLowerCase())}
                         onChange={(e) => {
+                          const formattedLang = lang.charAt(0).toUpperCase() + lang.slice(1).toLowerCase();
+                          console.log(`Language checkbox ${formattedLang} changed to ${e.target.checked}`);
+
                           if (e.target.checked) {
-                            setSelectedLanguages(prev => [...prev, lang.charAt(0).toUpperCase() + lang.slice(1).toLowerCase()]);
+                            setSelectedLanguages(prev => {
+                              const newLangs = [...prev, formattedLang];
+                              console.log(`Added ${formattedLang}, new selected languages:`, newLangs);
+                              return newLangs;
+                            });
                           } else {
-                            setSelectedLanguages(prev => 
-                              prev.filter(l => l !== lang && l !== primaryLanguage)
-                            );
+                            // Don't remove primary language
+                            setSelectedLanguages(prev => {
+                              const newLangs = prev.filter(l => l !== formattedLang || l === primaryLanguage);
+                              console.log(`Removed ${formattedLang}, new selected languages:`, newLangs);
+                              return newLangs;
+                            });
                           }
                         }}
                         disabled={isTourActive || lang === primaryLanguage}
@@ -255,9 +276,9 @@ export default function GuidePage() {
                   <AlertCircle className="h-4 w-4 mr-2" />
                   <AlertTitle>Tour Created!</AlertTitle>
                   <AlertDescription>
-                    Share this code with attendees: 
-                    <button 
-                      onClick={handleCopyTourCode} 
+                    Share this code with attendees:
+                    <button
+                      onClick={handleCopyTourCode}
                       className="inline-flex items-center ml-2 text-sm font-semibold hover:text-blue-600"
                     >
                       <Copy className="h-4 w-4 mr-1" />
@@ -283,8 +304,8 @@ export default function GuidePage() {
               </div>
             )}
           </div>
-          <TourControls 
-            onStartTour={handleStartTour} 
+          <TourControls
+            onStartTour={handleStartTour}
             onEndTour={handleEndTour}
             isTourActive={isTourActive}
           />
