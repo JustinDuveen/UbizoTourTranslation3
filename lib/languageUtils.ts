@@ -20,11 +20,13 @@ export function formatLanguageForDisplay(language: string): string {
 /**
  * Generates a Redis key for a WebRTC offer
  * @param tourId The tour ID
- * @param language The language (will be normalized)
+ * @param language The language (will be normalized if normalizeLanguage is true)
+ * @param normalizeLanguage Whether to normalize the language (default: true)
  * @returns The Redis key for the offer
  */
-export function getOfferKey(tourId: string, language: string): string {
-  return `tour:${tourId}:offer:${normalizeLanguageForStorage(language)}`;
+export function getOfferKey(tourId: string, language: string, normalizeLanguage: boolean = true): string {
+  const languageKey = normalizeLanguage ? normalizeLanguageForStorage(language) : language;
+  return `tour:${tourId}:offer:${languageKey}`;
 }
 
 /**
@@ -48,11 +50,13 @@ export function getPrimaryLanguageKey(tourId: string): string {
 /**
  * Generates a Redis key for language-specific attendees set
  * @param tourId The tour ID
- * @param language The language (will be normalized)
+ * @param language The language (will be normalized if normalizeLanguage is true)
+ * @param normalizeLanguage Whether to normalize the language (default: true)
  * @returns The Redis key for the language attendees set
  */
-export function getLanguageAttendeesKey(tourId: string, language: string): string {
-  return `tour:${tourId}:language:${normalizeLanguageForStorage(language)}:attendees`;
+export function getLanguageAttendeesKey(tourId: string, language: string, normalizeLanguage: boolean = true): string {
+  const languageKey = normalizeLanguage ? normalizeLanguageForStorage(language) : language;
+  return `tour:${tourId}:language:${languageKey}:attendees`;
 }
 
 /**
@@ -66,57 +70,168 @@ export function getAttendeeKey(tourId: string, attendeeId: string): string {
 }
 
 /**
- * Generates alternative case versions of an offer key for fallback lookups
+ * Generates alternative Redis keys for an offer to handle case variations
  * @param tourId The tour ID
- * @param language The language
- * @returns Array of alternative keys with different case variations
+ * @param language The original language string (not normalized)
+ * @returns Array of alternative Redis keys
  */
 export function getAlternativeOfferKeys(tourId: string, language: string): string[] {
-  const normalizedLang = normalizeLanguageForStorage(language);
-  const displayLang = formatLanguageForDisplay(language);
+  if (!language) return [];
 
-  return [
-    `tour:${tourId}:offer:${normalizedLang}`,
-    `tour:${tourId}:offer:${displayLang}`
+  const primaryKey = getOfferKey(tourId, normalizeLanguageForStorage(language));
+
+  const alternatives = [
+    // Original with different normalizations
+    `tour:${tourId}:offer:${language.toLowerCase()}`,
+    `tour:${tourId}:offer:${language.toUpperCase()}`,
+    `tour:${tourId}:offer:${language.charAt(0).toUpperCase() + language.slice(1).toLowerCase()}`,
+
+    // Common variations
+    `tour:${tourId}:offer:${language.trim().toLowerCase()}`,
+
+    // Language variations
+    `tour:${tourId}:offer:${formatLanguageForDisplay(language)}`,
+
+    // Legacy format (if any)
+    `tour:${tourId}:${language.toLowerCase()}:offer`
   ];
+
+  // Remove duplicates and the primary key (which will be checked first)
+  return [...new Set(alternatives)].filter(key => key !== primaryKey);
 }
 
 /**
- * Validates a WebRTC SDP offer object
+ * Validates a WebRTC SDP offer object with enhanced checks
  * @param offer The offer object to validate
  * @returns Validation result with isValid flag and optional error message
  */
 export function validateSdpOffer(offer: any): { isValid: boolean; error?: string } {
   if (!offer) {
-    return { isValid: false, error: 'Offer is empty or undefined' };
+    return { isValid: false, error: 'Offer is null or undefined' };
   }
 
-  // Basic validation - can be expanded as needed
+  // Type validation
   if (typeof offer !== 'object') {
-    return { isValid: false, error: 'Offer must be an object' };
+    return { isValid: false, error: `Invalid offer type: ${typeof offer}` };
+  }
+
+  // Structure validation
+  if (!offer.type) {
+    return { isValid: false, error: 'Missing offer type' };
+  }
+
+  // Check for valid type
+  if (offer.type !== 'offer' && offer.type !== 'answer') {
+    return { isValid: false, error: `Invalid offer type: ${offer.type}` };
+  }
+
+  // SDP content validation
+  let sdpContent = '';
+  if (offer.sdp && typeof offer.sdp === 'string') {
+    sdpContent = offer.sdp;
+  } else if (typeof offer === 'object') {
+    // Handle different possible structures
+    if (offer.offer && typeof offer.offer === 'string') {
+      sdpContent = offer.offer;
+    } else if (offer.offer && typeof offer.offer === 'object' && offer.offer.sdp && typeof offer.offer.sdp === 'string') {
+      sdpContent = offer.offer.sdp;
+    }
+  }
+
+  if (!sdpContent) {
+    return { isValid: false, error: 'Missing or invalid SDP content' };
+  }
+
+  // Comprehensive SDP validation
+  if (!sdpContent.includes('v=0')) {
+    return { isValid: false, error: 'SDP missing version (v=0)' };
+  }
+
+  if (!sdpContent.includes('m=audio')) {
+    return { isValid: false, error: 'SDP missing audio media section' };
+  }
+
+  // Check for required SDP attributes
+  const requiredAttributes = ['c=IN', 'a=rtpmap:', 'a=fingerprint:'];
+  const missingAttributes = requiredAttributes.filter(attr => !sdpContent.includes(attr));
+  if (missingAttributes.length > 0) {
+    return {
+      isValid: false,
+      error: `SDP missing required attributes: ${missingAttributes.join(', ')}`
+    };
+  }
+
+  // Check for audio directionality
+  const audioSection = sdpContent.split('m=audio')[1]?.split('m=')[0] || '';
+  if (!audioSection) {
+    return { isValid: false, error: 'Could not parse audio section from SDP' };
+  }
+
+  // For guide offers, we want sendrecv
+  if (offer.type === 'offer' && !audioSection.includes('a=sendrecv')) {
+    // Not invalid, but log a warning
+    console.warn('SDP offer does not have a=sendrecv for audio');
   }
 
   return { isValid: true };
 }
 
 /**
- * Checks if an offer is a placeholder offer
+ * Checks if an offer is a placeholder offer with enhanced detection
  * @param offer The offer object to check
  * @returns True if the offer is a placeholder, false otherwise
  */
 export function isPlaceholderOffer(offer: any): boolean {
   if (!offer) return true;
 
-  return (
+  // Log the offer structure for debugging
+  console.log(`[PLACEHOLDER-CHECK] Checking offer type: ${typeof offer}`);
+  if (typeof offer === 'object') {
+    console.log(`[PLACEHOLDER-CHECK] Offer keys: ${Object.keys(offer).join(', ')}`);
+  }
+
+  // Enhanced detection with multiple patterns
+  const isPlaceholder = (
+    // Status-based detection
     offer.status === 'pending' ||
-    (offer.offer && typeof offer.offer === 'string' &&
-     offer.offer.includes('Initialized offer for')) ||
-    // Check if it's missing valid SDP content
-    (offer.sdp && typeof offer.sdp === 'string' &&
-     !offer.sdp.includes('v=')) ||
-    // Version check - if no version, it's likely a placeholder
-    !offer.version
+    offer.status === 'initializing' ||
+
+    // Content-based detection
+    (offer.offer && typeof offer.offer === 'string' && (
+      offer.offer.includes('Initialized offer for') ||
+      offer.offer.includes('placeholder') ||
+      offer.offer.includes('pending')
+    )) ||
+
+    // SDP validation
+    (offer.sdp && typeof offer.sdp === 'string' && (
+      !offer.sdp.includes('v=0') ||
+      !offer.sdp.includes('m=audio')
+    )) ||
+
+    // Metadata checks
+    !offer.version ||
+    (offer.updated && new Date(offer.updated).getTime() < Date.now() - 3600000) || // Older than 1 hour
+
+    // Type checks
+    (offer.type === 'placeholder') ||
+
+    // Structure checks
+    (typeof offer === 'object' && Object.keys(offer).length < 2)
   );
+
+  if (isPlaceholder) {
+    console.log(`[PLACEHOLDER-CHECK] Detected placeholder offer`);
+    // Log the specific reason
+    if (offer.status === 'pending') console.log(`[PLACEHOLDER-CHECK] Reason: status is 'pending'`);
+    if (offer.offer && typeof offer.offer === 'string' && offer.offer.includes('Initialized offer for'))
+      console.log(`[PLACEHOLDER-CHECK] Reason: offer contains 'Initialized offer for'`);
+    if (offer.sdp && typeof offer.sdp === 'string' && !offer.sdp.includes('v=0'))
+      console.log(`[PLACEHOLDER-CHECK] Reason: SDP missing 'v=0'`);
+    if (!offer.version) console.log(`[PLACEHOLDER-CHECK] Reason: missing version`);
+  }
+
+  return isPlaceholder;
 }
 
 /**
@@ -128,7 +243,10 @@ export function isPlaceholderOffer(offer: any): boolean {
  * @returns Array of Redis commands for the transaction
  */
 export function createReplaceOfferTransaction(tourId: string, language: string, realOffer: any, expirySeconds: number = 7200): any[] {
-  const offerKey = getOfferKey(tourId, language);
+  // Normalize the language first
+  const normalizedLanguage = normalizeLanguageForStorage(language);
+  // Use normalizeLanguage=false since we've already normalized the language
+  const offerKey = getOfferKey(tourId, normalizedLanguage, false);
 
   // Add version to the offer
   const versionedOffer = {
@@ -157,7 +275,10 @@ export function createReplaceOfferTransaction(tourId: string, language: string, 
  * @returns Promise resolving to true if successful, false if failed
  */
 export async function executeReplaceOfferTransaction(redis: any, tourId: string, language: string, realOffer: any, expirySeconds: number = 7200): Promise<boolean> {
-  const offerKey = getOfferKey(tourId, language);
+  // Normalize the language first
+  const normalizedLanguage = normalizeLanguageForStorage(language);
+  // Use normalizeLanguage=false since we've already normalized the language
+  const offerKey = getOfferKey(tourId, normalizedLanguage, false);
   const langContext = `[${language}]`;
 
   // Add version and timestamp to the offer
@@ -233,7 +354,9 @@ export function createTourEndTransaction(tourId: string, guideId: string): any[]
     ['SET', `tour:${tourId}`, ''],
     // Remove the tour code mapping
     ['DEL', `tour_codes:${tourId}`],
-    // Mark the tour as inactive for the guide
+    // Delete the active tour reference (singular key used in the application)
+    ['DEL', `guide:${guideId}:active_tour`],
+    // Mark the tour as inactive for the guide (plural key for backward compatibility)
     ['SREM', `guide:${guideId}:active_tours`, tourId],
     // Add to ended tours set
     ['SADD', `guide:${guideId}:ended_tours`, tourId]

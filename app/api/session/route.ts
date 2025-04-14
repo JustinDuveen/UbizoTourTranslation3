@@ -16,14 +16,14 @@ export async function GET() {
 
     // Get Redis client (will use mock if Redis is unavailable)
     const redis = await getRedisClient()
-    
+
     // Check if we have a cached session
     const cachedSession = await redis.get("openai_session")
     if (cachedSession) {
       console.log("Using cached OpenAI session")
       return NextResponse.json(JSON.parse(cachedSession))
     }
-    
+
     // If no cached session, create a new one
     console.log("Creating new OpenAI session")
     console.log("OPENAI_API_KEY from env:", process.env.OPENAI_API_KEY);
@@ -36,8 +36,9 @@ export async function GET() {
       "Content-Type": "application/json",
     };
     const apiBody = JSON.stringify({
-      model: "gpt-4o-realtime-preview-2024-12-17",
+      model: "gpt-4o-mini-realtime-preview-2024-12-17",
       voice: "verse",
+      modalities: ["audio", "text"]
     });
 
     console.log("OpenAI API request:", apiUrl);
@@ -58,15 +59,15 @@ export async function GET() {
     }
 
     const data = await response.json()
-    
+
     // Cache the session for future use (with 55 second expiry to ensure we don't use expired keys)
     // OpenAI requires ephemeral keys to expire after 1 minute
     await redis.set("openai_session", JSON.stringify(data), { EX: 55 })
-    
+
     return NextResponse.json(data)
   } catch (error) {
     console.error("Error generating ephemeral key:", error)
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: "Error generating ephemeral key",
       message: error instanceof Error ? error.message : String(error)
     }, { status: 500 })

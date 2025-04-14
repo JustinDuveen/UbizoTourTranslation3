@@ -38,6 +38,7 @@ export async function executeTourEndTransaction(tourId: string, guideId: string)
 
   // Get the base transaction operations
   const operations = createTourEndTransaction(tourId, guideId);
+  console.log(`${logPrefix} Created tour end transaction with operations:`, operations);
 
   // Execute the transaction with custom handling
   return await timeAsync(async () => {
@@ -63,12 +64,19 @@ export async function executeTourEndTransaction(tourId: string, guideId: string)
       // Replace the placeholder in the transaction
       operations[1].args = [JSON.stringify(updatedTourInfo), 'KEEPTTL'];
 
+      // Check if active tour key exists before transaction
+      const activeTourBefore = await redis.get(`guide:${guideId}:active_tour`);
+      console.log(`${logPrefix} Active tour before transaction: ${activeTourBefore || 'None'}`);
+
       // Execute the transaction
+      console.log(`${logPrefix} Executing Redis transaction with ${operations.length} operations`);
       const results = await executeRedisTransaction(operations, {
         maxRetries: 3,
         logPrefix,
         validateResults: (results) => validateTransactionResults(results, operations.length)
       });
+
+      console.log(`${logPrefix} Transaction results:`, results);
 
       recordMetric(MetricType.TOUR_END, 1, { tourId });
 

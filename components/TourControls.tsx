@@ -3,17 +3,22 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/use-toast"
+import MuteButton from "./MuteButton"
 
 interface TourControlsProps {
   onStartTour: () => Promise<void>
   onEndTour: () => Promise<void>
+  onToggleMute?: (muted: boolean) => void
   isTourActive: boolean
+  isMuted?: boolean
 }
 
-export default function TourControls({ 
-  onStartTour, 
+export default function TourControls({
+  onStartTour,
   onEndTour,
-  isTourActive
+  onToggleMute,
+  isTourActive,
+  isMuted = false
 }: TourControlsProps) {
   const [isLoading, setIsLoading] = useState(false)
   const { toast } = useToast()
@@ -40,15 +45,24 @@ export default function TourControls({
 
   return (
     <div className="flex space-x-4 mt-4">
-      <Button 
-        onClick={() => handleAction(onStartTour, "Started")} 
+      <Button
+        onClick={() => handleAction(onStartTour, "Started")}
         disabled={isLoading || isTourActive}
       >
         {isLoading ? "Starting..." : "Start Tour"}
       </Button>
-      <Button 
-        onClick={() => handleAction(onEndTour, "Ended")} 
-        variant="destructive" 
+
+      {isTourActive && onToggleMute && (
+        <MuteButton
+          onToggleMute={onToggleMute}
+          isMuted={isMuted}
+          disabled={isLoading}
+        />
+      )}
+
+      <Button
+        onClick={() => handleAction(onEndTour, "Ended")}
+        variant="destructive"
         disabled={isLoading || !isTourActive}
       >
         {isLoading ? "Ending..." : "End Tour"}

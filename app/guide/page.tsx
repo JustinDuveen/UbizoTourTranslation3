@@ -1,14 +1,15 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import LanguageSelector from "@/components/LanguageSelector"
 import TranslationOutput from "@/components/TranslationOutput"
 import TourControls from "@/components/TourControls"
 import AttendeeList from "@/components/AttendeeList"
-import { initGuideWebRTC, cleanupGuideWebRTC } from "@/lib/guideWebRTC"
+import { initGuideWebRTC, cleanupGuideWebRTC, toggleMicrophoneMute } from "@/lib/guideWebRTC"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle, Copy } from "lucide-react"
+import { TranslationMonitor } from "@/lib/translationMonitor"
 
 // Simple spinner component for loading state
 function Spinner() {
@@ -37,16 +38,54 @@ export default function GuidePage() {
   const [isTourActive, setIsTourActive] = useState<boolean>(false);
   const [isTourEnding, setIsTourEnding] = useState<boolean>(false); // Track if the tour is intentionally ending
   const [tourCode, setTourCode] = useState<string | null>(null); // State for tour code
+  const [isMuted, setIsMuted] = useState<boolean>(false); // State for microphone mute status
   const [tourCreated, setTourCreated] = useState<boolean>(false); // State to track if tour is created
   const [copySuccess, setCopySuccess] = useState<string>("");
 
   const routerPush = useRouter().push
+
+  // Initialize AudioContext and play a silent sound to get user consent for audio playback
+  const initializeAudioContext = () => {
+    console.log("Initializing AudioContext for browser audio consent...");
+    try {
+      // Create AudioContext
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const audioContext = new AudioContextClass();
+
+      // Create and play a silent sound (1ms)
+      const buffer = audioContext.createBuffer(1, 1, 22050);
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioContext.destination);
+      source.start(0);
+
+      console.log("AudioContext initialized and silent sound played for consent");
+      return audioContext;
+    } catch (error) {
+      console.error("Error initializing AudioContext:", error);
+      return null;
+    }
+  };
 
   const handleStartTour = async () => {
     try {
       console.log("=== STARTING TOUR ===")
       setIsLoading(true)
       setError(null)
+
+      // Initialize audio context immediately on button click for browser consent
+      const audioContext = initializeAudioContext();
+      console.log("Audio context initialized:", audioContext ? "Success" : "Failed");
+
+      // Resume audio context if needed
+      if (audioContext && audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+          console.log('Audio context resumed successfully');
+        } catch (error) {
+          console.error('Failed to resume audio context:', error);
+        }
+      }
 
       // Make sure primary language is included in selected languages
       let finalSelectedLanguages = [...selectedLanguages];
@@ -124,6 +163,12 @@ export default function GuidePage() {
       setError("Failed to initialize the tour. Please try again.")
       setIsLoading(false)
     }
+  }
+
+  const handleToggleMute = (muted: boolean) => {
+    console.log(`${muted ? 'Muting' : 'Unmuting'} microphone...`);
+    toggleMicrophoneMute(muted);
+    setIsMuted(muted);
   }
 
   const handleEndTour = async () => {
@@ -304,12 +349,35 @@ export default function GuidePage() {
               </div>
             )}
           </div>
-          <TourControls
-            onStartTour={handleStartTour}
-            onEndTour={handleEndTour}
-            isTourActive={isTourActive}
-          />
-          <AttendeeList attendees={attendees} />
+          <div className="space-y-4">
+            <TourControls
+              onStartTour={handleStartTour}
+              onEndTour={handleEndTour}
+              onToggleMute={handleToggleMute}
+              isTourActive={isTourActive}
+              isMuted={isMuted}
+            />
+
+            {/* Monitor Controls - Only shown in development mode */}
+            {process.env.NODE_ENV !== 'production' && isTourActive && (
+              <div className="flex space-x-2 mt-4 justify-center">
+                <button
+                  onClick={() => TranslationMonitor.toggleMinimize()}
+                  className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+                >
+                  Toggle Monitor Size
+                </button>
+                <button
+                  onClick={() => TranslationMonitor.cleanup()}
+                  className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+                >
+                  Close Monitor
+                </button>
+              </div>
+            )}
+
+            <AttendeeList attendees={attendees} />
+          </div>
         </>
       )}
     </main>

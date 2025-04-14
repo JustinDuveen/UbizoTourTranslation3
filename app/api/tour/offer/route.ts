@@ -3,85 +3,95 @@ import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { verifyToken } from "@/lib/auth";
 import { getRedisClient } from "@/lib/redis";
-import { executeReplaceOfferTransaction, getOfferKey, normalizeLanguageForStorage, formatLanguageForDisplay, getLanguageAttendeesKey } from "@/lib/languageUtils";
+import { executeReplaceOfferTransaction, getOfferKey, normalizeLanguageForStorage, formatLanguageForDisplay, getLanguageAttendeesKey, validateSdpOffer, isPlaceholderOffer, getAlternativeOfferKeys } from "@/lib/languageUtils";
 
 /**
- * Helper function to extract the user from the request cookies.
- */
+ * Helper function to extract the user from the request cookies.
+ */
 function getUserFromHeaders() {
-  const headersList = headers();
-  const cookieHeader = headersList.get("cookie") || "";
-  const token = cookieHeader
-    .split("; ")
-    .find((row) => row.startsWith("token="))
-    ?.split("=")[1];
-  return token ? verifyToken(token) : null;
+  const headersList = headers();
+  const cookieHeader = headersList.get("cookie") || "";
+  const token = cookieHeader
+    .split("; ")
+    .find((row) => row.startsWith("token="))
+    ?.split("=")[1];
+  return token ? verifyToken(token) : null;
 }
 
 /**
- * POST endpoint for guides to store their WebRTC offer.
- */
+ * POST endpoint for guides to store their WebRTC offer.
+ */
 export async function POST(request: Request) {
-  try {
-    // Authenticate the guide
-    const user = getUserFromHeaders();
-    if (!user || user.role !== "guide") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  try {
+    // Authenticate the guide
+    const user = getUserFromHeaders();
+    if (!user || user.role !== "guide") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    // Parse and validate request body
-    const body = await request.json();
-    const { language, offer, tourId } = body;
-    if (!language || !offer || !tourId) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
-    }
+    // Parse and validate request body
+    const body = await request.json();
+    const { language, offer, tourId } = body;
+    if (!language || !offer || !tourId) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
 
-    // Get Redis client
-    const redis = await getRedisClient();
+    // Get Redis client
+    const redis = await getRedisClient();
 
-    // Validate the tour exists
-    const tourExists = await redis.exists(`tour:${tourId}`);
-    if (!tourExists) {
-      return NextResponse.json({ error: "No active tour found" }, { status: 404 });
-    }
+    // Validate the tour exists
+    const tourExists = await redis.exists(`tour:${tourId}`);
+    if (!tourExists) {
+      return NextResponse.json({ error: "No active tour found" }, { status: 404 });
+    }
 
     // Prepare to store the offer in Redis
     const normalizedLanguage = normalizeLanguageForStorage(language);
     const displayLanguage = formatLanguageForDisplay(language);
-    const offerKey = getOfferKey(tourId, normalizedLanguage);
+    // Use normalizeLanguage=false since we've already normalized the language
+    const offerKey = getOfferKey(tourId, normalizedLanguage, false);
     const langContext = `[GUIDE] [${displayLanguage}]`;
 
     console.log(`${langContext} Preparing to store offer at Redis key: ${offerKey}`);
 
     // Enhanced validation for SDP content
     let validatedOffer = offer;
-    let isPlaceholder = false;
 
-    // Check if this is a placeholder offer
-    if (typeof offer === 'object' && offer.status === 'pending') {
-      console.log(`${langContext} Detected placeholder offer with status: ${offer.status}`);
-      isPlaceholder = true;
-    } else if (typeof offer === 'object' && offer.offer &&
-               typeof offer.offer === 'string' &&
-               offer.offer.includes('Initialized offer for')) {
-      console.log(`${langContext} Detected placeholder offer with initialization message`);
-      isPlaceholder = true;
+    // Check if this is a placeholder offer using the utility function
+    const isPlaceholder = isPlaceholderOffer(offer);
+    if (isPlaceholder) {
+      console.log(`${langContext} Detected placeholder offer`);
     }
 
     // Validate SDP content if this is not a placeholder
-    if (!isPlaceholder && typeof offer === 'object' && offer.sdp && typeof offer.sdp === 'string') {
-      if (!offer.sdp.includes('v=')) {
-        console.error(`${langContext} Invalid SDP content detected, missing v= marker`);
-        // Try to fix the SDP if possible
-        if (offer.sdp.includes('\"v=')) {
-          console.log(`${langContext} Found escaped v= marker, attempting to fix...`);
-          validatedOffer = {
-            ...offer,
-            sdp: offer.sdp.replace(/\\"v=/g, 'v=').replace(/\\n/g, '\n')
-          };
+    if (!isPlaceholder) {
+      // Use the enhanced validation utility
+      const validation = validateSdpOffer(offer);
+
+      if (!validation.isValid) {
+        console.error(`${langContext} SDP validation failed: ${validation.error}`);
+
+        // Try to fix common SDP issues
+        if (typeof offer === 'object' && offer.sdp && typeof offer.sdp === 'string') {
+          // Fix escaped quotes and newlines
+          if (offer.sdp.includes('\"v=')) {
+            console.log(`${langContext} Found escaped v= marker, attempting to fix...`);
+            validatedOffer = {
+              ...offer,
+              sdp: offer.sdp.replace(/\\"v=/g, 'v=').replace(/\\n/g, '\n')
+            };
+
+            // Validate the fixed offer
+            const fixedValidation = validateSdpOffer(validatedOffer);
+            if (fixedValidation.isValid) {
+              console.log(`${langContext} Successfully fixed SDP content`);
+            } else {
+              console.error(`${langContext} Failed to fix SDP content: ${fixedValidation.error}`);
+            }
+          }
         }
       } else {
-        console.log(`${langContext} Valid SDP content detected with v= marker`);
+        console.log(`${langContext} SDP validation successful`);
       }
     }
 
@@ -94,174 +104,288 @@ export async function POST(request: Request) {
       console.warn(`${langContext} Transaction did not replace offer, may already have a valid offer`);
     }
 
-    // Verify the offer was stored correctly
-    const verifiedOffer = await redis.get(offerKey);
-    console.log(`${langContext} Verified offer in Redis: ${verifiedOffer ? 'Present' : 'Missing'}`);
-    if (verifiedOffer) {
-      console.log(`${langContext} Verified offer preview: ${verifiedOffer.substring(0, 100)}...`);
+    // Verify the offer was stored correctly with retry logic
+    let verifiedOffer = null;
+    let verificationAttempt = 0;
+    const maxVerificationAttempts = 3;
+
+    while (!verifiedOffer && verificationAttempt < maxVerificationAttempts) {
+      try {
+        verifiedOffer = await redis.get(offerKey);
+        if (!verifiedOffer) {
+          verificationAttempt++;
+          if (verificationAttempt < maxVerificationAttempts) {
+            console.log(`${langContext} Offer verification failed, retrying (${verificationAttempt}/${maxVerificationAttempts})...`);
+            await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, verificationAttempt)));
+          }
+        }
+      } catch (error) {
+        console.error(`${langContext} Error verifying offer (attempt ${verificationAttempt + 1}/${maxVerificationAttempts}):`, error);
+        verificationAttempt++;
+        if (verificationAttempt < maxVerificationAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, verificationAttempt)));
+        }
+      }
     }
 
-    return NextResponse.json({ message: "Offer stored successfully" });
-  } catch (error) {
-    console.error("Error storing offer:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to store offer",
-        message: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
-  }
+    if (!verifiedOffer) {
+      console.error(`${langContext} Failed to verify offer after ${maxVerificationAttempts} attempts`);
+      return NextResponse.json({
+        error: "Failed to verify stored offer",
+        message: "Offer may not have been stored correctly"
+      }, { status: 500 });
+    }
+
+    console.log(`${langContext} Verified offer in Redis: Present`);
+    console.log(`${langContext} Verified offer preview: ${verifiedOffer.substring(0, 100)}...`);
+
+    // Now verify the offer via the verify-offer endpoint
+    try {
+      const headersList = headers();
+
+      // Construct the verification URL
+      let baseUrl = '';
+      if (typeof window === 'undefined') {
+        // Server-side: use internal URL
+        baseUrl = 'http://localhost:3000';
+      } else {
+        // Client-side: use public URL
+        baseUrl = process.env.NEXT_PUBLIC_API_BASE || '';
+      }
+
+      const verifyUrl = new URL(`${baseUrl}/api/tour/verify-offer`);
+      verifyUrl.searchParams.append('tourId', tourId);
+      verifyUrl.searchParams.append('language', language);
+
+      console.log(`${langContext} Verifying offer via API: ${verifyUrl.toString()}`);
+
+      const verifyResponse = await fetch(verifyUrl.toString(), {
+        method: 'GET',
+        headers: {
+          'Cookie': headersList.get("cookie") || ""
+        }
+      });
+
+      if (verifyResponse.ok) {
+        const verifyData = await verifyResponse.json();
+        console.log(`${langContext} Offer verification successful: ${JSON.stringify(verifyData)}`);
+      } else {
+        try {
+          const errorData = await verifyResponse.json();
+          console.error(`${langContext} Offer verification failed: ${JSON.stringify(errorData)}`);
+        } catch (e) {
+          console.error(`${langContext} Offer verification failed with status: ${verifyResponse.status}`);
+        }
+        // Continue despite verification failure, but log it
+      }
+    } catch (error) {
+      console.error(`${langContext} Error during offer verification API call:`, error);
+      // Continue despite verification error, but log it
+    }
+
+    return NextResponse.json({
+      message: "Offer stored successfully",
+      language: displayLanguage,
+      normalizedLanguage: normalizedLanguage,
+      offerKey: offerKey
+    });
+  } catch (error) {
+    console.error("Error storing offer:", error);
+    return NextResponse.json(
+      {
+        error: "Failed to store offer",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
 }
 
 /**
- * GET endpoint for attendees to retrieve the guide's WebRTC offer.
- */
+ * GET endpoint for attendees to retrieve the guide's WebRTC offer.
+ */
 export async function GET(request: Request) {
-  try {
-    // Authenticate the attendee
-    const user = getUserFromHeaders();
-    if (!user || user.role !== "attendee") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  try {
+    // Authenticate the attendee
+    const user = getUserFromHeaders();
+    if (!user || user.role !== "attendee") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    // Extract and validate basic parameters
+    // Extract and validate parameters
     const { searchParams } = new URL(request.url);
     const languageParam = searchParams.get("language");
-    const normalizedLanguage = languageParam ? normalizeLanguageForStorage(languageParam) : null;
-    const displayLanguage = languageParam ? formatLanguageForDisplay(languageParam) : null;
     const tourCode = searchParams.get("tourCode");
     const attendeeName = searchParams.get("attendeeName");
 
-    console.log(`[ATTENDEE] Request parameters - language: ${languageParam} (normalized: ${normalizedLanguage}), tourCode: ${tourCode}`);
-
-    if (!normalizedLanguage || !tourCode) {
-      return NextResponse.json({
-        error: "Missing required parameters",
-        details: {
-          language: !normalizedLanguage,
-          tourCode: !tourCode
-        }
-      }, { status: 400 });
+    if (!languageParam || !tourCode) {
+      return NextResponse.json({ error: "Missing required parameters" }, { status: 400 });
     }
 
-    // Get Redis client and retrieve tourId from tourCode
+    // Normalize language for consistent key generation
+    const language = normalizeLanguageForStorage(languageParam);
+    const displayLanguage = formatLanguageForDisplay(languageParam);
+    console.log(`[ATTENDEE] Normalized language: ${language} (from ${languageParam})`);
+
+    // Get Redis client
     const redis = await getRedisClient();
-    const tourId = await redis.get(`tour_codes:${tourCode}`);
-    if (!tourId) {
-      return NextResponse.json({ error: "No active tour found" }, { status: 404 });
-    }
 
-    // Check if language is supported for this tour
-    const isLanguageSupported = await redis.sIsMember(`tour:${tourId}:supported_languages`, normalizedLanguage);
-    if (!isLanguageSupported) {
-      return NextResponse.json({ error: "Language not supported for this tour" }, { status: 404 });
-    }
+    // Get the tourId from the tour code with retry logic
+    let tourId = null;
+    let retryCount = 0;
+    const maxRetries = 3;
 
-    // Retrieve the offer from Redis
-    const offerKey = getOfferKey(tourId, normalizedLanguage);
-    const offerJson = await redis.get(offerKey);
-    if (!offerJson) {
-      return NextResponse.json({ error: "Offer not found for this language" }, { status: 404 });
-    }
-
-    // Only validate attendeeName if we have a valid offer
-    if (!attendeeName?.trim()) {
-      return NextResponse.json({
-        error: "Missing required parameter: attendeeName"
-      }, { status: 400 });
-    }
-
-    // Register this attendee with the tour
-    const attendeeKey = `tour:${tourId}:attendee:${user.id}`;
-    const languageKey = getLanguageAttendeesKey(tourId, normalizedLanguage);
-
-    // Store attendee details as JSON
-    await redis.set(attendeeKey, JSON.stringify({
-      name: attendeeName,
-      language: normalizedLanguage,
-      displayLanguage: displayLanguage,
-      joinTime: new Date().toISOString(),
-      userId: user.id.toString() // Ensure id is string for Redis
-    }));
-
-    // Add to language-specific attendee set
-    await redis.sAdd(languageKey, user.id);
-
-    // Add to general attendees set if not already registered
-    const isRegistered = await redis.sIsMember(`tour:${tourId}:attendees`, user.id);
-    if (!isRegistered) {
-      await redis.sAdd(`tour:${tourId}:attendees`, user.id);
-
-      // Publish attendee joined event
-      await redis.publish(`tour:${tourId}:events`, JSON.stringify({
-        type: 'attendee_joined',
-        attendee: {
-          id: user.id,
-          name: attendeeName,
-          language: normalizedLanguage,
-          displayLanguage: displayLanguage,
-          joinTime: new Date().toISOString()
-        }
-      }));
-    }
-
-
-    try {
-      // Debug: Log the raw offer JSON
-      console.log(`Raw offer JSON from Redis: ${offerJson.substring(0, 200)}${offerJson.length > 200 ? '...' : ''}`);
-
-      // Parse the offer JSON
-      const parsedOffer = JSON.parse(offerJson);
-      console.log(`Offer parsed successfully, type: ${typeof parsedOffer}`);
-
-      // Debug: Log more details about the parsed offer
-      if (typeof parsedOffer === 'object') {
-        console.log(`Parsed offer keys: ${Object.keys(parsedOffer).join(', ')}`);
-        if (parsedOffer.sdp) {
-          console.log(`SDP content starts with: ${parsedOffer.sdp.substring(0, 50)}...`);
-          console.log(`SDP includes 'v=' marker: ${parsedOffer.sdp.includes('v=')}`);
-
-          // Try to fix SDP if it's invalid
-          if (!parsedOffer.sdp.includes('v=') && parsedOffer.sdp.includes('\"v=')) {
-            console.log(`Found escaped v= marker, attempting to fix...`);
-            parsedOffer.sdp = parsedOffer.sdp.replace(/\\"v=/g, 'v=').replace(/\\n/g, '\n');
+    while (!tourId && retryCount < maxRetries) {
+      try {
+        tourId = await redis.get(`tour_codes:${tourCode}`);
+        if (!tourId) {
+          retryCount++;
+          if (retryCount < maxRetries) {
+            console.log(`[ATTENDEE] Tour ID not found, retrying (${retryCount}/${maxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, retryCount)));
           }
         }
+      } catch (error) {
+        console.error(`[ATTENDEE] Error retrieving tour ID (attempt ${retryCount + 1}/${maxRetries}):`, error);
+        retryCount++;
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, retryCount)));
+        }
       }
-
-      // Return the offer with the tourId for reference
-      return NextResponse.json({
-        offer: parsedOffer,
-        tourId: tourId
-      });
-    } catch (error) {
-      let errorMessage = "Unknown error occurred";
-
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === "string") {
-        errorMessage = error;
-      }
-
-      console.error(`Error parsing offer JSON: ${errorMessage}`);
-      return NextResponse.json(
-        {
-          error: "Invalid offer format",
-          message: errorMessage,
-        },
-        { status: 500 }
-      );
     }
 
-      } catch (error) {
-    console.error("Error retrieving offer:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to retrieve offer",
-        message: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
-  }
+    if (!tourId) {
+      return NextResponse.json({ error: "Invalid tour code" }, { status: 404 });
+    }
+
+    console.log(`[ATTENDEE] Found tourId: ${tourId} for tourCode: ${tourCode}`);
+
+    // Get the offer from Redis with retry logic
+    // Use normalizeLanguage=false since we've already normalized the language
+    const offerKey = getOfferKey(tourId, language, false);
+    console.log(`[ATTENDEE] Looking for offer at Redis key: ${offerKey}`);
+
+    let offerJson = null;
+    retryCount = 0;
+
+    while (!offerJson && retryCount < maxRetries) {
+      try {
+        offerJson = await redis.get(offerKey);
+        if (!offerJson) {
+          retryCount++;
+          if (retryCount < maxRetries) {
+            console.log(`[ATTENDEE] Offer not found, retrying (${retryCount}/${maxRetries})...`);
+            await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, retryCount)));
+          }
+        }
+      } catch (error) {
+        console.error(`[ATTENDEE] Error retrieving offer (attempt ${retryCount + 1}/${maxRetries}):`, error);
+        retryCount++;
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, retryCount)));
+        }
+      }
+    }
+
+    // If still not found, check alternative keys
+    if (!offerJson) {
+      const alternativeKeys = getAlternativeOfferKeys(tourId, languageParam);
+      console.log(`[ATTENDEE] Checking alternative keys: ${alternativeKeys.join(', ')}`);
+
+      for (const altKey of alternativeKeys) {
+        try {
+          offerJson = await redis.get(altKey);
+          if (offerJson) {
+            console.log(`[ATTENDEE] Found offer at alternative key: ${altKey}`);
+            break;
+          }
+        } catch (error) {
+          console.error(`[ATTENDEE] Error checking alternative key ${altKey}:`, error);
+        }
+      }
+    }
+
+    if (!offerJson) {
+      return NextResponse.json({
+        error: "Offer not found",
+        message: "The guide may not have started broadcasting yet"
+      }, { status: 404 });
+    }
+
+    // Parse and validate the offer
+    let offer;
+    try {
+      offer = JSON.parse(offerJson);
+      console.log(`[ATTENDEE] Parsed offer type: ${typeof offer}`);
+
+      // Check if it's a placeholder
+      if (isPlaceholderOffer(offer)) {
+        console.log(`[ATTENDEE] Found placeholder offer for ${displayLanguage}`);
+        return NextResponse.json({
+          tourId,
+          placeholder: true,
+          message: "Guide has not started broadcasting yet"
+        });
+      }
+
+      // Validate the SDP offer
+      const validation = validateSdpOffer(offer);
+      if (!validation.isValid) {
+        console.error(`[ATTENDEE] Invalid SDP offer: ${validation.error}`);
+        return NextResponse.json({
+          error: `Invalid SDP offer: ${validation.error}`,
+          tourId,
+          placeholder: true,
+          message: "Guide's broadcast is not properly configured"
+        }, { status: 400 });
+      }
+    } catch (error) {
+      console.error(`[ATTENDEE] Error parsing offer JSON:`, error);
+      return NextResponse.json({
+        error: "Invalid offer format",
+        message: error instanceof Error ? error.message : String(error),
+        tourId,
+        placeholder: true
+      }, { status: 400 });
+    }
+
+    // Register the attendee if a name was provided
+    if (attendeeName) {
+      try {
+        // Use normalizeLanguage=false since we've already normalized the language
+        const attendeeKey = getLanguageAttendeesKey(tourId, language, false);
+        console.log(`[ATTENDEE] Registering attendee ${attendeeName} at key: ${attendeeKey}`);
+
+        // Add to the set of attendees for this language
+        await redis.sAdd(attendeeKey, attendeeName);
+
+        // Set expiry on the attendee key if it doesn't exist
+        const ttl = await redis.ttl(attendeeKey);
+        if (ttl < 0) {
+          await redis.expire(attendeeKey, 7200); // 2-hour expiry
+        }
+
+        console.log(`[ATTENDEE] Successfully registered attendee ${attendeeName}`);
+      } catch (error) {
+        console.error(`[ATTENDEE] Error registering attendee:`, error);
+        // Continue despite registration error
+      }
+    }
+
+    // Return the offer to the attendee
+    return NextResponse.json({
+      tourId,
+      offer,
+      placeholder: false
+    });
+  } catch (error) {
+    console.error("Error retrieving offer:", error);
+    return NextResponse.json(
+      {
+        error: "Failed to retrieve offer",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
 }

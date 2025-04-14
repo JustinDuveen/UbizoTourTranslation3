@@ -51,9 +51,11 @@ export async function POST(request: Request) {
     }
 
     const answer = body.answer;
+    console.log(`Storing answer for tourId: ${tourId}, language: ${language}`);
 
     const redisClient = await getRedisClient();
-    await redisClient.rPush(`tour:${tourId}:${language}:answers`, answer);
+    await redisClient.rPush(`tour:${tourId}:${language}:answers`, JSON.stringify(answer));
+    console.log(`Answer stored successfully in Redis for tourId: ${tourId}, language: ${language}`);
 
     return NextResponse.json({ message: "Answer added successfully" });
   } catch (error) {

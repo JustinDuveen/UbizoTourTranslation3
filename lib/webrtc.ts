@@ -562,8 +562,207 @@ function createPeerConnection(language: string, tourCode: string, setTranslation
       ]
   });
 
+  // Enhanced connection state monitoring
+  pc.oniceconnectionstatechange = () => {
+    console.log(`[CONN-DEBUG] [${language}] ICE connection state changed to: ${pc.iceConnectionState}`);
+
+    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      console.warn(`[CONN-DEBUG] [${language}] ICE connection is ${pc.iceConnectionState}, checking audio element...`);
+      const connection = Array.from(connections.values()).find(conn => conn.pc === pc);
+
+      if (connection && connection.audioEl) {
+        console.log(`[CONN-DEBUG] [${language}] Audio element status: paused=${connection.audioEl.paused}, ` +
+          `currentTime=${connection.audioEl.currentTime}, volume=${connection.audioEl.volume}, ` +
+          `muted=${connection.audioEl.muted}, readyState=${connection.audioEl.readyState}`);
+      }
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log(`[CONN-DEBUG] [${language}] Connection state changed to: ${pc.connectionState}`);
+
+    if (pc.connectionState === 'connected') {
+      // When connected, check if we're actually receiving audio
+      setTimeout(() => {
+        pc.getStats().then(stats => {
+          let audioStats = {};
+          let hasAudioTrack = false;
+          let isReceivingPackets = false;
+
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              hasAudioTrack = true;
+              isReceivingPackets = report.packetsReceived > 0;
+              audioStats = {
+                packetsReceived: report.packetsReceived,
+                bytesReceived: report.bytesReceived,
+                packetsLost: report.packetsLost,
+                jitter: report.jitter
+              };
+            }
+          });
+
+          console.log(`[CONN-DEBUG] [${language}] Audio stats: hasTrack=${hasAudioTrack}, ` +
+            `receivingPackets=${isReceivingPackets}`, audioStats);
+
+          if (hasAudioTrack && !isReceivingPackets) {
+            console.warn(`[CONN-DEBUG] [${language}] Connected but not receiving audio packets!`);
+          }
+        });
+      }, 2000); // Check 2 seconds after connection established
+    }
+  };
+
+  // Enhanced audio element setup with detailed logging
+  console.log(`[AUDIO-DEBUG] [${language}] Creating audio element...`);
   const audioEl = new Audio();
   audioEl.autoplay = true;
+  audioEl.muted = false; // Ensure not muted
+  audioEl.volume = 1.0; // Maximum volume
+  audioEl.controls = true; // Add controls for debugging
+
+  // Add event listeners for audio element
+  audioEl.addEventListener('canplay', () => {
+    console.log(`[AUDIO-DEBUG] [${language}] Audio canplay event fired - audio is ready to play`);
+  });
+
+  audioEl.addEventListener('playing', () => {
+    console.log(`[AUDIO-DEBUG] [${language}] Audio playing event fired - playback has started`);
+  });
+
+  audioEl.addEventListener('pause', () => {
+    console.log(`[AUDIO-DEBUG] [${language}] Audio pause event fired - playback has paused`);
+  });
+
+  audioEl.addEventListener('error', () => {
+    console.error(`[AUDIO-DEBUG] [${language}] Audio error event:`, audioEl.error);
+  });
+
+  console.log(`[AUDIO-DEBUG] [${language}] Audio element created with properties:`, {
+    autoplay: audioEl.autoplay,
+    muted: audioEl.muted,
+    volume: audioEl.volume,
+    controls: audioEl.controls
+  });
+
+  // Add audio element to the DOM for debugging
+  if (typeof document !== 'undefined') {
+    // Create a container for the audio element and indicators
+    const audioContainer = document.createElement('div');
+    audioContainer.style.position = 'fixed';
+    audioContainer.style.bottom = '20px';
+    audioContainer.style.right = '20px';
+    audioContainer.style.zIndex = '9999';
+    audioContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    audioContainer.style.padding = '10px';
+    audioContainer.style.borderRadius = '5px';
+    audioContainer.style.color = 'white';
+    audioContainer.style.fontFamily = 'Arial, sans-serif';
+
+    // Add language label
+    const languageLabel = document.createElement('div');
+    languageLabel.textContent = `Audio Debug: ${language}`;
+    languageLabel.style.marginBottom = '5px';
+    audioContainer.appendChild(languageLabel);
+
+    // Add audio element to container
+    audioContainer.appendChild(audioEl);
+
+    // Add audio level indicator
+    const audioLevelIndicator = document.createElement('div');
+    audioLevelIndicator.style.width = '100%';
+    audioLevelIndicator.style.height = '20px';
+    audioLevelIndicator.style.backgroundColor = '#333';
+    audioLevelIndicator.style.marginTop = '5px';
+    audioLevelIndicator.style.position = 'relative';
+
+    const audioLevelBar = document.createElement('div');
+    audioLevelBar.style.width = '0%';
+    audioLevelBar.style.height = '100%';
+    audioLevelBar.style.backgroundColor = '#4CAF50';
+    audioLevelBar.style.transition = 'width 0.1s';
+    audioLevelIndicator.appendChild(audioLevelBar);
+
+    audioContainer.appendChild(audioLevelIndicator);
+
+    // Add status text
+    const statusText = document.createElement('div');
+    statusText.textContent = 'Waiting for audio...';
+    statusText.style.marginTop = '5px';
+    statusText.style.fontSize = '12px';
+    audioContainer.appendChild(statusText);
+
+    // Add to document
+    document.body.appendChild(audioContainer);
+
+    // Setup audio level monitoring
+    if (window.AudioContext || (window as any).webkitAudioContext) {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      let analyser: AnalyserNode | null = null;
+      let source: MediaStreamAudioSourceNode | null = null;
+
+      // Function to update audio level display
+      const updateAudioLevel = () => {
+        if (!analyser) return;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+
+        // Calculate average level
+        const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+        const level = Math.min(100, average * 2); // Scale to percentage, max 100%
+
+        // Update level bar
+        audioLevelBar.style.width = `${level}%`;
+
+        // Update status text
+        if (level > 5) {
+          statusText.textContent = `Receiving audio: ${Math.round(level)}% level`;
+          statusText.style.color = '#4CAF50';
+          audioLevelBar.style.backgroundColor = '#4CAF50';
+        } else {
+          statusText.textContent = 'No audio detected';
+          statusText.style.color = '#FF5722';
+          audioLevelBar.style.backgroundColor = '#FF5722';
+        }
+
+        // Schedule next update
+        requestAnimationFrame(updateAudioLevel);
+      };
+
+      // Setup analyzer when media stream is available
+      const setupAnalyser = (stream: MediaStream) => {
+        if (source) {
+          source.disconnect();
+        }
+
+        source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        // Start monitoring
+        updateAudioLevel();
+      };
+
+      // Monitor for media stream changes
+      const checkForMediaStream = () => {
+        const connection = Array.from(connections.values()).find(conn => conn.pc === pc);
+        if (connection && connection.mediaStream) {
+          setupAnalyser(connection.mediaStream);
+          return true;
+        }
+        return false;
+      };
+
+      // Check periodically until we get a media stream
+      const checkInterval = setInterval(() => {
+        if (checkForMediaStream()) {
+          clearInterval(checkInterval);
+        }
+      }, 1000);
+    }
+  }
 
   // Store initial connection state with all audio-related properties
   const connectionState: ConnectionState = {
@@ -596,76 +795,200 @@ function createPeerConnection(language: string, tourCode: string, setTranslation
 }
 
 function setupMediaHandlers(pc: RTCPeerConnection, audioEl: HTMLAudioElement, setTranslation: (text: string) => void) {
-  // Media track handler with enhanced audio setup
+  // Media track handler with enhanced audio setup and detailed diagnostics
   pc.ontrack = async (event) => {
+    console.log(`[AUDIO-DEBUG] ontrack event received: track kind=${event.track.kind}, id=${event.track.id}`);
+    console.log(`[AUDIO-DEBUG] Track details: enabled=${event.track.enabled}, muted=${event.track.muted}, readyState=${event.track.readyState}`);
+    console.log(`[AUDIO-DEBUG] Number of streams:`, event.streams.length);
+
     if (event.track.kind === 'audio') {
+      console.log(`[AUDIO-DEBUG] Audio track received`);
       try {
         // Store media stream reference for cleanup
         const mediaStream = event.streams[0];
+        if (!mediaStream) {
+          console.error(`[AUDIO-DEBUG] No media stream available in track event`);
+          return;
+        }
+
+        console.log(`[AUDIO-DEBUG] Media stream obtained: id=${mediaStream.id}`);
+        console.log(`[AUDIO-DEBUG] Media stream tracks:`, mediaStream.getTracks().map(t =>
+          `{kind: ${t.kind}, id: ${t.id}, enabled: ${t.enabled}, muted: ${t.muted}, readyState: ${t.readyState}}`))
+
         const connection = Array.from(connections.values())
           .find(conn => conn.audioEl === audioEl);
 
-        if (connection) {
-          // Clean up any existing stream
-          if (connection.mediaStream) {
-            connection.mediaStream.getTracks().forEach(track => {
-              track.stop();
-              connection.mediaStream?.removeTrack(track);
-            });
-          }
+        if (!connection) {
+          console.error(`[AUDIO-DEBUG] Could not find connection for audio element`);
+          return;
+        }
+        console.log(`[AUDIO-DEBUG] Found connection for audio element`);
 
-          connection.mediaStream = mediaStream;
-
-          // Create AudioContext for better audio handling
-          if (!connection.audioContext || connection.audioContext.state === 'closed') {
-            connection.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-          }
-
-          if (connection.audioContext.state === 'suspended') {
-            await connection.audioContext.resume();
-          }
-
-          // Connect audio processing chain
-          const source = connection.audioContext.createMediaStreamSource(mediaStream);
-          const gainNode = connection.audioContext.createGain();
-          gainNode.gain.value = 1.0; // Adjustable volume
-
-          source.connect(gainNode);
-          gainNode.connect(connection.audioContext.destination);
+        // Clean up any existing stream
+        if (connection.mediaStream) {
+          console.log(`[AUDIO-DEBUG] Cleaning up existing media stream`);
+          connection.mediaStream.getTracks().forEach(track => {
+            track.stop();
+            connection.mediaStream?.removeTrack(track);
+          });
         }
 
-        // Set up audio element
-        audioEl.srcObject = mediaStream;
-        await audioEl.play().catch(async e => {
-          console.warn("Autoplay blocked:", e);
-          // Attempt to handle autoplay blocking
-          document.addEventListener('click', () => {
-            audioEl.play().catch(console.error);
-          }, { once: true });
+        connection.mediaStream = mediaStream;
+        console.log(`[AUDIO-DEBUG] Assigned new media stream to connection`);
+
+        // Create AudioContext for better audio handling
+        if (!connection.audioContext || connection.audioContext.state === 'closed') {
+          console.log(`[AUDIO-DEBUG] Creating new AudioContext`);
+          connection.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+          console.log(`[AUDIO-DEBUG] AudioContext created, state=${connection.audioContext.state}`);
+        }
+
+        if (connection.audioContext.state === 'suspended') {
+          console.log(`[AUDIO-DEBUG] Resuming suspended AudioContext`);
+          await connection.audioContext.resume();
+          console.log(`[AUDIO-DEBUG] AudioContext resumed, new state=${connection.audioContext.state}`);
+        }
+
+        // Connect audio processing chain
+        console.log(`[AUDIO-DEBUG] Setting up audio processing chain`);
+        const source = connection.audioContext.createMediaStreamSource(mediaStream);
+        const gainNode = connection.audioContext.createGain();
+        gainNode.gain.value = 1.0; // Adjustable volume
+        console.log(`[AUDIO-DEBUG] Gain node created with value=${gainNode.gain.value}`);
+
+        source.connect(gainNode);
+        gainNode.connect(connection.audioContext.destination);
+        console.log(`[AUDIO-DEBUG] Audio processing chain connected`);
+
+        // Log audio element properties before setting srcObject
+        console.log(`[AUDIO-DEBUG] Audio element before setup: autoplay=${audioEl.autoplay}, muted=${audioEl.muted}, volume=${audioEl.volume}`);
+
+        // Add comprehensive event listeners to audio element for diagnostics
+        audioEl.addEventListener('canplay', () => {
+          console.log(`[AUDIO-DEBUG] Audio canplay event fired - audio is ready to play`);
         });
 
-        // Monitor audio track state
+        audioEl.addEventListener('playing', () => {
+          console.log(`[AUDIO-DEBUG] Audio playing event fired - playback has started`);
+        });
+
+        audioEl.addEventListener('pause', () => {
+          console.log(`[AUDIO-DEBUG] Audio pause event fired - playback has paused`);
+        });
+
+        audioEl.addEventListener('error', (e) => {
+          console.error(`[AUDIO-DEBUG] Audio error event:`, audioEl.error);
+        });
+
+        audioEl.addEventListener('stalled', () => {
+          console.warn(`[AUDIO-DEBUG] Audio stalled event - playback has stalled`);
+        });
+
+        audioEl.addEventListener('waiting', () => {
+          console.warn(`[AUDIO-DEBUG] Audio waiting event - waiting for more data`);
+        });
+
+        // Set up audio element
+        console.log(`[AUDIO-DEBUG] Setting srcObject on audio element...`);
+        audioEl.srcObject = mediaStream;
+        console.log(`[AUDIO-DEBUG] Set srcObject on audio element`);
+
+        // Ensure autoplay and unmuted
+        audioEl.autoplay = true;
+        audioEl.muted = false;
+        audioEl.volume = 1.0;
+
+        // Make audio element visible for debugging
+        audioEl.controls = true; // Temporary for debugging
+        if (!audioEl.parentElement) {
+          console.log(`[AUDIO-DEBUG] Audio element not in DOM, appending to body for debugging`);
+          document.body.appendChild(audioEl);
+        }
+
+        console.log(`[AUDIO-DEBUG] Audio element configured: autoplay=${audioEl.autoplay}, muted=${audioEl.muted}, volume=${audioEl.volume}, controls=${audioEl.controls}`);
+
+        try {
+          console.log(`[AUDIO-DEBUG] Attempting to play audio...`);
+          await audioEl.play();
+          console.log(`[AUDIO-DEBUG] Audio playback started successfully`);
+
+          // Check if audio is actually playing
+          setTimeout(() => {
+            if (!audioEl.paused) {
+              console.log(`[AUDIO-DEBUG] Audio is still playing after 1 second`);
+              console.log(`[AUDIO-DEBUG] Current time: ${audioEl.currentTime}, duration: ${audioEl.duration || 'unknown'}`);
+            } else {
+              console.warn(`[AUDIO-DEBUG] Audio paused unexpectedly after starting playback`);
+            }
+          }, 1000);
+
+        } catch (e) {
+          console.warn(`[AUDIO-DEBUG] Autoplay blocked:`, e);
+
+          // Create a visible play button for user interaction
+          const playButton = document.createElement('button');
+          playButton.textContent = 'Click to Enable Audio';
+          playButton.style.position = 'fixed';
+          playButton.style.top = '20px';
+          playButton.style.right = '20px';
+          playButton.style.zIndex = '9999';
+          playButton.style.padding = '10px';
+          playButton.style.backgroundColor = '#4CAF50';
+          playButton.style.color = 'white';
+          playButton.style.border = 'none';
+          playButton.style.borderRadius = '5px';
+          playButton.style.cursor = 'pointer';
+
+          playButton.onclick = () => {
+            console.log(`[AUDIO-DEBUG] Play button clicked, trying to play audio`);
+            audioEl.play().then(() => {
+              console.log(`[AUDIO-DEBUG] Audio playback started after button click`);
+              playButton.remove();
+            }).catch(err => {
+              console.error(`[AUDIO-DEBUG] Failed to play audio after button click:`, err);
+              playButton.textContent = 'Failed to Enable Audio - Try Again';
+            });
+          };
+
+          document.body.appendChild(playButton);
+          console.log(`[AUDIO-DEBUG] Added play button to page for user interaction`);
+        }
+
+        // Monitor audio track state with enhanced diagnostics
         event.track.onended = () => {
-          console.log('Audio track ended');
+          console.log(`[AUDIO-DEBUG] Audio track ended: id=${event.track.id}`);
+          console.log(`[AUDIO-DEBUG] Track state at end: enabled=${event.track.enabled}, muted=${event.track.muted}, readyState=${event.track.readyState}`);
+
           if (mediaStream) {
+            console.log(`[AUDIO-DEBUG] Removing ended track from media stream`);
             mediaStream.removeTrack(event.track);
+            console.log(`[AUDIO-DEBUG] Remaining tracks in stream:`, mediaStream.getTracks().length);
           }
+
           // Trigger reconnection if track ends unexpectedly
           if (pc.connectionState === 'connected') {
-            console.log('Unexpected track end, attempting recovery...');
+            console.log(`[AUDIO-DEBUG] Unexpected track end while connection is still active`);
+            console.log(`[AUDIO-DEBUG] Connection state: ${pc.connectionState}, ICE state: ${pc.iceConnectionState}`);
+
             const connEntry = Array.from(connections.entries())
               .find(([_, conn]) => conn.audioEl === audioEl);
+
             if (connEntry) {
+              console.log(`[AUDIO-DEBUG] Found connection entry, attempting recovery for language: ${connEntry[0]}`);
               reconnect(setTranslation, connEntry[0]);
+            } else {
+              console.error(`[AUDIO-DEBUG] Could not find connection entry for recovery`);
             }
+          } else {
+            console.log(`[AUDIO-DEBUG] Track ended while connection is in state: ${pc.connectionState}, no recovery needed`);
           }
         };
 
         // Monitor audio levels to detect silence
         const audioContext = new AudioContext();
         const analyser = audioContext.createAnalyser();
-        const source = audioContext.createMediaStreamSource(mediaStream);
-        source.connect(analyser);
+        const monitorSource = audioContext.createMediaStreamSource(mediaStream);
+        monitorSource.connect(analyser);
 
         const checkAudioLevels = () => {
           if (!analyser) return;
@@ -784,12 +1107,43 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
       throw new Error('No WebRTC offer available');
     }
 
-    // Debug: Log the raw offer data before validation
-    console.log(`Raw offer data type:`, typeof offerData.offer);
+    // Enhanced SDP analysis for debugging audio issues
+    console.log(`[SDP-DEBUG] Raw offer data type:`, typeof offerData.offer);
     if (typeof offerData.offer === 'object') {
-      console.log(`Offer object keys:`, Object.keys(offerData.offer).join(', '));
+      console.log(`[SDP-DEBUG] Offer object keys:`, Object.keys(offerData.offer).join(', '));
       if (offerData.offer.sdp) {
-        console.log(`SDP preview:`, offerData.offer.sdp.substring(0, 100));
+        const sdp = offerData.offer.sdp;
+        console.log(`[SDP-DEBUG] SDP preview:`, sdp.substring(0, 100));
+
+        // Analyze SDP for audio capabilities
+        console.log(`[SDP-DEBUG] Analyzing SDP for audio capabilities...`);
+
+        // Check for audio media section
+        const audioSection = sdp.match(/m=audio.*(?:\r\n|\r|\n)(?:.*(?:\r\n|\r|\n))*/g);
+        if (audioSection) {
+          console.log(`[SDP-DEBUG] Audio section found in SDP:`, audioSection[0]);
+
+          // Check for sendrecv/recvonly/sendonly directionality
+          const directionality = audioSection[0].match(/a=(sendrecv|recvonly|sendonly|inactive)/g);
+          if (directionality) {
+            console.log(`[SDP-DEBUG] Audio directionality:`, directionality[0]);
+            if (directionality[0] !== 'a=sendrecv' && directionality[0] !== 'a=recvonly') {
+              console.warn(`[SDP-DEBUG] Audio may not be receivable! Directionality is ${directionality[0]}`);
+            }
+          } else {
+            console.warn(`[SDP-DEBUG] No explicit audio directionality found in SDP`);
+          }
+
+          // Check for audio codecs
+          const codecs = audioSection[0].match(/a=rtpmap:(\d+) ([\w\-/]+)/g);
+          if (codecs) {
+            console.log(`[SDP-DEBUG] Audio codecs:`, codecs);
+          } else {
+            console.warn(`[SDP-DEBUG] No audio codecs found in SDP`);
+          }
+        } else {
+          console.error(`[SDP-DEBUG] No audio section found in SDP!`);
+        }
       }
     }
 
@@ -903,11 +1257,15 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
     try {
       console.log(`Sending answer to server for language: ${language}, tourId: ${tourId}${retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''}`);
 
+      // Debug the answer format
+      const answerObj = pc.localDescription;
+      console.log(`Answer type: ${answerObj?.type}, has sdp: ${Boolean(answerObj?.sdp)}`);
+
       const response = await fetch(`/api/tour/answer?tourId=${encodeURIComponent(tourId)}&language=${encodeURIComponent(language)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-              answer: pc.localDescription
+              answer: answerObj
           }),
           credentials: "include"
       });

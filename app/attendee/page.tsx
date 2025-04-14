@@ -51,6 +51,32 @@ export default function AttendeePage() {
   const [availableLanguages, setAvailableLanguages] = useState<{code: string, display: string}[]>([])
   const [isLoadingLanguages, setIsLoadingLanguages] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+
+  // Initialize AudioContext and play a silent sound to get user consent for audio playback
+  const initializeAudioContext = () => {
+    console.log("Initializing AudioContext for browser audio consent...");
+    try {
+      // Create AudioContext if not already created
+      if (!audioContextRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioContextRef.current = new AudioContextClass();
+
+        // Create and play a silent sound (1ms)
+        const buffer = audioContextRef.current.createBuffer(1, 1, 22050);
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContextRef.current.destination);
+        source.start(0);
+
+        console.log("AudioContext initialized and silent sound played for consent");
+      }
+      return audioContextRef.current;
+    } catch (error) {
+      console.error("Error initializing AudioContext:", error);
+      return null;
+    }
+  };
 
   // Enhanced connection handler with retry logic
   const connectToGuide = useCallback(async (tourCode: string, selectedLanguage: string, attendeeName: string, attempt: number = 1) => {
@@ -190,6 +216,20 @@ export default function AttendeePage() {
     setError(null)
     setNoTourError(null)
 
+    // Initialize audio context immediately on button click for browser consent
+    const audioContext = initializeAudioContext();
+    console.log("Audio context initialized:", audioContext ? "Success" : "Failed");
+
+    // Resume audio context if needed
+    if (audioContext && audioContext.state === 'suspended') {
+      try {
+        await audioContext.resume();
+        console.log('Audio context resumed successfully');
+      } catch (error) {
+        console.error('Failed to resume audio context:', error);
+      }
+    }
+
     try {
       // Store name in localStorage for reconnections
       localStorage.setItem('attendeeName', name.trim());
@@ -295,6 +335,15 @@ export default function AttendeePage() {
       cleanupWebRTC()
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
+      }
+
+      // Close AudioContext when component unmounts
+      if (audioContextRef.current) {
+        console.log('Closing AudioContext on cleanup');
+        audioContextRef.current.close().catch(err => {
+          console.error("Error closing AudioContext:", err);
+        });
+        audioContextRef.current = null;
       }
     }
   }, [router])

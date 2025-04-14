@@ -45,10 +45,16 @@ export async function POST(request: Request) {
     }
 
     // Execute the tour end transaction
+    console.log(`${logPrefix} Executing tour end transaction for tour ID: ${activeTourId}, guide ID: ${user.id}`);
     const result = await executeTourEndTransaction(activeTourId, user.id);
+
+    // Verify the active tour key was deleted
+    const activeTourAfterEnd = await redis.get(`guide:${user.id}:active_tour`);
+    console.log(`${logPrefix} Active tour after end operation: ${activeTourAfterEnd ? activeTourAfterEnd : 'None (successfully deleted)'}`);
 
     // Record success metric
     recordMetric(MetricType.API_REQUEST_SUCCESS, 1, { endpoint: 'tour-end' });
+    console.log(`${logPrefix} Tour ended successfully:`, result);
 
     return NextResponse.json(result);
   } catch (error) {
