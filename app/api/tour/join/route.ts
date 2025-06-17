@@ -320,11 +320,11 @@ export async function GET(request: Request) {
       console.log(`Returning join response with tourId: ${tourId}, streamReady: true, offer type: ${formattedOffer.type}`);
       return NextResponse.json(response, { status: 200 });
     } catch (error) {
-      console.error(`Error formatting offer: ${error.message}`);
+      console.error(`Error formatting offer: ${error instanceof Error ? error.message : String(error)}`);
       return NextResponse.json({
         tourId,
         error: "Invalid WebRTC offer format",
-        details: error.message,
+        details: error instanceof Error ? error.message : String(error),
         streamReady: false
       }, { status: 500 });
     }

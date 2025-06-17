@@ -201,7 +201,7 @@ export function handleError(error: any, logPrefix: string = 'ERROR'): {
 
 /**
  * Wrap an async function with error handling
- * 
+ *
  * @param fn The async function to wrap
  * @param logPrefix Optional prefix for logging
  * @returns A function that handles errors
@@ -220,4 +220,31 @@ export function withErrorHandling<T extends any[], R>(
       );
     }
   };
+}
+
+/**
+ * Safely extract error message from unknown error type
+ * This utility helps prevent TypeScript errors when accessing error.message
+ *
+ * @param error The error to extract message from
+ * @returns Safe error message string
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
+ * Safely extract error name from unknown error type
+ *
+ * @param error The error to extract name from
+ * @returns Safe error name string
+ */
+export function getErrorName(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name;
+  }
+  return 'UnknownError';
 }

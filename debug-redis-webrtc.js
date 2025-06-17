@@ -60,7 +60,7 @@ client.on("error", (err) => {
           console.log(`      Supported Languages in Redis: ${JSON.stringify(supportedLangs)}`);
         } catch (parseError) {
           const tourId = tourKey.replace('tour:', '');
-          console.log(`   ⚠️ Tour ID: ${tourId} - JSON Parse Error: ${parseError.message}`);
+          console.log(`   ⚠️ Tour ID: ${tourId} - JSON Parse Error: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
           console.log(`      Raw data: ${tourData.substring(0, 100)}...`);
         }
       }
@@ -101,7 +101,7 @@ client.on("error", (err) => {
             console.log(`      ⚠️ No SDP content found`);
           }
         } catch (e) {
-          console.log(`   ❌ Error parsing offer ${offerKey}:`, e.message);
+          console.log(`   ❌ Error parsing offer ${offerKey}:`, e instanceof Error ? e.message : String(e));
         }
       }
     }
@@ -145,7 +145,7 @@ client.on("error", (err) => {
           const parsedAnswer = JSON.parse(answer);
           console.log(`      Answer ${index + 1}: Type=${parsedAnswer.type}, SDP Length=${parsedAnswer.sdp?.length || 0}`);
         } catch (e) {
-          console.log(`      Answer ${index + 1}: Parse error - ${e.message}`);
+          console.log(`      Answer ${index + 1}: Parse error - ${e instanceof Error ? e.message : String(e)}`);
         }
       });
     }
@@ -165,7 +165,7 @@ client.on("error", (err) => {
           const firstCandidate = JSON.parse(candidates[0]);
           console.log(`      First candidate: ${firstCandidate.candidate?.substring(0, 50) || 'No candidate string'}...`);
         } catch (e) {
-          console.log(`      First candidate parse error: ${e.message}`);
+          console.log(`      First candidate parse error: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
@@ -198,7 +198,7 @@ client.on("error", (err) => {
             console.log(`   Has SDP: ${!!offer.sdp}`);
             console.log(`   SDP valid: ${offer.sdp && offer.sdp.includes('v=') ? '✅' : '❌'}`);
           } catch (e) {
-            console.log(`   ❌ Offer parse error: ${e.message}`);
+            console.log(`   ❌ Offer parse error: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
 
