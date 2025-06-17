@@ -71,7 +71,7 @@ export async function POST(request: Request) {
       console.log(`Verified languages in Redis set:`, storedLanguages);
 
       // Check if all languages were added
-      const allAdded = normalizedLanguages.every(lang => storedLanguages.includes(lang));
+      const allAdded = normalizedLanguages.every((lang: string) => storedLanguages.includes(lang));
       console.log(`All languages added successfully: ${allAdded}`);
 
       if (!allAdded) {
