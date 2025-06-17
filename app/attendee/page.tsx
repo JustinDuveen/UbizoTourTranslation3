@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import dynamic from 'next/dynamic'
 // Removed LanguageSelector import as we're using Select directly
-import { initWebRTC, cleanupWebRTC } from "@/lib/webrtc"
+import { initWebRTC, cleanupWebRTC, endAttendeeSession } from "@/lib/webrtc"
 import { normalizeLanguageForStorage, formatLanguageForDisplay } from "@/lib/languageUtils"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import DOMPurify from 'dompurify'
@@ -29,10 +29,6 @@ function getCookie(name: string): string | null {
   const parts = value.split(`; ${name}=`)
   if (parts.length === 2) {
     const cookie = parts.pop()?.split(';').shift() || null
-    // Security enhancement
-    if (process.env.NODE_ENV === 'production') {
-      document.cookie = `${name}=; SameSite=Strict; Secure`
-    }
     return cookie
   }
   return null
@@ -50,33 +46,10 @@ export default function AttendeePage() {
   const [name, setName] = useState<string>("")
   const [availableLanguages, setAvailableLanguages] = useState<{code: string, display: string}[]>([])
   const [isLoadingLanguages, setIsLoadingLanguages] = useState(false)
+  const [isEndingSession, setIsEndingSession] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
 
-  // Initialize AudioContext and play a silent sound to get user consent for audio playback
-  const initializeAudioContext = () => {
-    console.log("Initializing AudioContext for browser audio consent...");
-    try {
-      // Create AudioContext if not already created
-      if (!audioContextRef.current) {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        audioContextRef.current = new AudioContextClass();
 
-        // Create and play a silent sound (1ms)
-        const buffer = audioContextRef.current.createBuffer(1, 1, 22050);
-        const source = audioContextRef.current.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audioContextRef.current.destination);
-        source.start(0);
-
-        console.log("AudioContext initialized and silent sound played for consent");
-      }
-      return audioContextRef.current;
-    } catch (error) {
-      console.error("Error initializing AudioContext:", error);
-      return null;
-    }
-  };
 
   // Enhanced connection handler with retry logic
   const connectToGuide = useCallback(async (tourCode: string, selectedLanguage: string, attendeeName: string, attempt: number = 1) => {
@@ -184,7 +157,7 @@ export default function AttendeePage() {
     } finally {
       setIsLoadingLanguages(false);
     }
-  }, []);
+  }, [router]);
 
   // Update available languages when tour code changes
   useEffect(() => {
@@ -195,6 +168,22 @@ export default function AttendeePage() {
       setLanguage('');
     }
   }, [tourCode, fetchAvailableLanguages]);
+
+
+
+  // Handle ending the session
+  const handleEndSession = useCallback(() => {
+    setIsEndingSession(true);
+    try {
+      endAttendeeSession();
+      setConnectionState('idle');
+      setTranslation("");
+    } catch (err) {
+      console.error('Error ending session:', err);
+    } finally {
+      setIsEndingSession(false);
+    }
+  }, []);
 
   const handleConnect = useCallback(async () => {
     if (!tourCode?.match(/^[A-Z0-9]{6}$/)) {
@@ -215,20 +204,6 @@ export default function AttendeePage() {
 
     setError(null)
     setNoTourError(null)
-
-    // Initialize audio context immediately on button click for browser consent
-    const audioContext = initializeAudioContext();
-    console.log("Audio context initialized:", audioContext ? "Success" : "Failed");
-
-    // Resume audio context if needed
-    if (audioContext && audioContext.state === 'suspended') {
-      try {
-        await audioContext.resume();
-        console.log('Audio context resumed successfully');
-      } catch (error) {
-        console.error('Failed to resume audio context:', error);
-      }
-    }
 
     try {
       // Store name in localStorage for reconnections
@@ -286,15 +261,9 @@ export default function AttendeePage() {
         // Normalize language to lowercase for consistency
         const lang = urlLanguage.toLowerCase()
         setLanguage(lang)
-
-        // Auto-connect if both params present
-        if (code.match(/^[A-Z0-9]{6}$/)) {
-          setIsAutoConnecting(true)
-          handleConnect().catch(() => setIsAutoConnecting(false))
-        }
       }
     }
-  }, [handleConnect])
+  }, [])
 
   // Auth check and cleanup
   useEffect(() => {
@@ -335,15 +304,6 @@ export default function AttendeePage() {
       cleanupWebRTC()
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
-      }
-
-      // Close AudioContext when component unmounts
-      if (audioContextRef.current) {
-        console.log('Closing AudioContext on cleanup');
-        audioContextRef.current.close().catch(err => {
-          console.error("Error closing AudioContext:", err);
-        });
-        audioContextRef.current = null;
       }
     }
   }, [router])
@@ -491,7 +451,7 @@ export default function AttendeePage() {
         </div>
 
         <div className="mt-8 w-full">
-        <TranslationOutput
+          <TranslationOutput
             translation={
               connectionState === 'connecting'
                 ? "Connecting to translation service..."
@@ -499,6 +459,21 @@ export default function AttendeePage() {
             }
           />
         </div>
+
+        {/* Session Controls - Only shown when connected */}
+        {connectionState === 'connected' && (
+          <div className="mt-6 flex justify-center">
+            <Button
+              onClick={handleEndSession}
+              variant="destructive"
+              disabled={isEndingSession}
+              className="flex items-center gap-2"
+            >
+              <LogOut className="h-4 w-4" />
+              {isEndingSession ? "Ending..." : "End Session"}
+            </Button>
+          </div>
+        )}
       </div>
     </main>
   )

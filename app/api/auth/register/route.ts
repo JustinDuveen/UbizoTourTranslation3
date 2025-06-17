@@ -5,20 +5,21 @@ export async function POST(request: Request) {
   const { email, password, role } = await request.json()
   console.log("Registration attempt:", { email, role })
 
-  const user = await createUser(email, password, role as "guide" | "attendee")
-  console.log("Created user:", user)
-  if (!user) {
-    console.log("User creation failed")
-    return NextResponse.json({ error: "Failed to create user" }, { status: 400 })
+  const result = await createUser(email, password, role as "guide" | "attendee")
+  console.log("Registration result:", result)
+
+  if (!result.success) {
+    console.log("User creation failed:", result.error)
+    return NextResponse.json({ error: result.error }, { status: 400 })
   }
 
-  const token = generateToken(user)
-  const response = { 
+  const token = generateToken(result.user)
+  const response = {
     token,
     user: {
-      id: user.id,
-      email: user.email,
-      role: user.role
+      id: result.user.id,
+      email: result.user.email,
+      role: result.user.role
     }
   }
   console.log("Registration response:", response)

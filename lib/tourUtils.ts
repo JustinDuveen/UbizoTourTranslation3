@@ -70,6 +70,8 @@ export async function executeTourEndTransaction(tourId: string, guideId: string)
 
       // Execute the transaction
       console.log(`${logPrefix} Executing Redis transaction with ${operations.length} operations`);
+      console.log(`${logPrefix} Transaction operations details:`, operations.map(([cmd, ...args]) => ({ command: cmd, args })));
+
       const results = await executeRedisTransaction(operations, {
         maxRetries: 3,
         logPrefix,

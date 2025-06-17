@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Signaling Test</title>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <h1>WebSocket Signaling Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="log"></div>
+    
+    <script>
+        const log = document.getElementById('log');
+        const status = document.getElementById('status');
+        
+        function addLog(message) {
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toISOString()}: ${message}`;
+            log.appendChild(div);
+            console.log(message);
+        }
+        
+        addLog('Attempting to connect to Socket.IO...');
+        
+        const socket = io({
+            path: '/socket.io/',
+            transports: ['websocket', 'polling'],
+            auth: {
+                tourId: 'TEST123',
+                language: 'english',
+                role: 'guide',
+                attendeeId: 'test-attendee'
+            }
+        });
+        
+        socket.on('connect', () => {
+            status.textContent = '✅ Connected';
+            status.style.color = 'green';
+            addLog('✅ WebSocket connected successfully!');
+            addLog(`Socket ID: ${socket.id}`);
+        });
+        
+        socket.on('disconnect', (reason) => {
+            status.textContent = '❌ Disconnected';
+            status.style.color = 'red';
+            addLog(`❌ WebSocket disconnected: ${reason}`);
+        });
+        
+        socket.on('connect_error', (error) => {
+            status.textContent = '❌ Connection Error';
+            status.style.color = 'red';
+            addLog(`❌ Connection error: ${error.message}`);
+        });
+        
+        socket.on('connected', (data) => {
+            addLog(`✅ Signaling server confirmed connection: ${JSON.stringify(data)}`);
+        });
+        
+        // Test sending a message after connection
+        socket.on('connect', () => {
+            setTimeout(() => {
+                addLog('📤 Sending test ICE candidate...');
+                socket.emit('ice-candidate', {
+                    type: 'ice-candidate',
+                    data: { candidate: 'test-candidate', sdpMLineIndex: 0, sdpMid: 'audio' },
+                    tourId: 'TEST123',
+                    language: 'english',
+                    sender: 'guide',
+                    timestamp: Date.now()
+                });
+            }, 1000);
+        });
+        
+        socket.on('ice-candidate', (message) => {
+            addLog(`📥 Received ICE candidate: ${JSON.stringify(message)}`);
+        });
+    </script>
+</body>
+</html>

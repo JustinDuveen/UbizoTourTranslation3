@@ -13,9 +13,9 @@ import { TranslationMonitor } from './translationMonitor';
  * Initialize the translation monitor if in development mode
  */
 export function initializeMonitor(): void {
-  // Only initialize in development mode
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('[MonitorIntegration] Initializing translation monitor in development mode');
+  // Only initialize if not in production and explicitly enabled
+  if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === 'true') {
+    console.log('[MonitorIntegration] Initializing translation monitor (NODE_ENV !== "production" && NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === "true")');
 
     // Check if the browser supports the monitor
     if (TranslationMonitor.isSupported()) {
@@ -32,16 +32,7 @@ export function initializeMonitor(): void {
           TranslationMonitor.resumeAudioContext();
         }
 
-        // Find and play any guide audio elements
-        const guideAudioElements = document.querySelectorAll('.guide-audio-element');
-        guideAudioElements.forEach(audioEl => {
-          if (audioEl instanceof HTMLAudioElement && audioEl.paused) {
-            console.log(`[MonitorIntegration] Attempting to play guide audio element: ${audioEl.id}`);
-            audioEl.play().catch(err => {
-              console.warn(`[MonitorIntegration] Failed to play guide audio: ${err.message}`);
-            });
-          }
-        });
+        // Audio elements are now handled automatically without debug classes
 
         // Only need this once
         document.removeEventListener('click', resumeAudioContexts);
@@ -76,10 +67,14 @@ export function initializeMonitor(): void {
         setTimeout(() => volumeReminder.remove(), 10000);
       }, 2000);
     } else {
-      console.warn('[MonitorIntegration] Translation monitor not supported in this browser');
+      console.warn('[MonitorIntegration] Translation monitor not supported in this browser (when enabled)');
     }
   } else {
-    console.log('[MonitorIntegration] Skipping monitor initialization in production mode');
+    if (process.env.NODE_ENV === 'production') {
+      console.log('[MonitorIntegration] Skipping monitor initialization: Production mode.');
+    } else {
+      console.log('[MonitorIntegration] Skipping monitor initialization: NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR is not "true".');
+    }
   }
 }
 
@@ -105,9 +100,9 @@ export function enhanceOnTrackHandler(
       originalHandler(event);
     }
 
-    // Then add monitoring if in development mode
-    if (process.env.NODE_ENV !== 'production' && event.track.kind === 'audio') {
-      console.log(`[MonitorIntegration] Monitoring track for language: ${language}`);
+    // Then add monitoring if in development mode, explicitly enabled, and track is audio
+    if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === 'true' && event.track.kind === 'audio') {
+      console.log(`[MonitorIntegration] Monitoring track for language: ${language} (NODE_ENV !== "production" && NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === "true")`);
 
       // Small delay to ensure the original handler has completed its setup
       setTimeout(() => {
@@ -122,12 +117,18 @@ export function enhanceOnTrackHandler(
  * Clean up the monitor when the guide WebRTC connection is closed
  */
 export function cleanupMonitor(): void {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('[MonitorIntegration] Cleaning up translation monitor');
+  // Only cleanup if it was potentially initialized (not in production and explicitly enabled)
+  if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === 'true') {
+    console.log('[MonitorIntegration] Cleaning up translation monitor (NODE_ENV !== "production" && NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === "true")');
     TranslationMonitor.cleanup();
     console.log('[MonitorIntegration] Translation monitor cleaned up successfully');
   } else {
-    console.log('[MonitorIntegration] Skipping monitor cleanup in production mode');
+    // No cleanup needed if not initialized under these conditions
+    if (process.env.NODE_ENV === 'production') {
+        console.log('[MonitorIntegration] Skipping monitor cleanup: Production mode.');
+    } else {
+        console.log('[MonitorIntegration] Skipping monitor cleanup: NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR is not "true".');
+    }
   }
 }
 
@@ -137,7 +138,8 @@ export function cleanupMonitor(): void {
  * @param container The container element to add the button to
  */
 export function addMonitorButton(container: HTMLElement): void {
-  if (process.env.NODE_ENV !== 'production') {
+  // Only add button if in development mode and explicitly enabled
+  if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === 'true') {
     // Create button container
     const buttonContainer = document.createElement('div');
     buttonContainer.className = 'flex space-x-2 mt-2';

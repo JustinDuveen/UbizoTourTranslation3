@@ -7,19 +7,29 @@ export interface UserPayload {
   email: string
   role: "guide" | "attendee"
 }
+// Auth result type for better error handling
+export type AuthResult = {
+  success: true;
+  user: UserPayload;
+} | {
+  success: false;
+  error: string;
+  code?: string;
+}
+
 /**
  * Creates a new user in the Supabase authentication system and the profiles table.
  *
  * @param email - The email address of the new user
  * @param password - The password for the new user
  * @param role - The role of the new user ('guide' or 'attendee')
- * @returns A UserPayload object if successful, null otherwise
+ * @returns An AuthResult object with success status and user data or error message
  */
 export async function createUser(
   email: string,
   password: string,
   role: "guide" | "attendee",
-): Promise<UserPayload | null> {
+): Promise<AuthResult> {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -27,7 +37,11 @@ export async function createUser(
 
   if (error) {
     console.error("Error creating user:", error)
-    return null
+    return {
+      success: false,
+      error: getAuthErrorMessage(error.message, error.status),
+      code: error.status?.toString()
+    }
   }
 
   if (data.user) {
@@ -37,13 +51,60 @@ export async function createUser(
 
     if (profileError) {
       console.error("Error creating user profile:", profileError)
-      return null
+      return {
+        success: false,
+        error: "Failed to create user profile. Please try again."
+      }
     }
 
-    return { id: data.user.id, email, role }
+    return {
+      success: true,
+      user: { id: data.user.id, email, role }
+    }
   }
 
-  return null
+  return {
+    success: false,
+    error: "Failed to create user. Please try again."
+  }
+}
+
+/**
+ * Convert Supabase auth errors to user-friendly messages
+ */
+function getAuthErrorMessage(errorMessage: string, status?: number): string {
+  const message = errorMessage.toLowerCase()
+
+  // Password validation errors
+  if (message.includes('weak_password') || message.includes('password')) {
+    if (message.includes('length')) {
+      return "Password must be at least 6 characters long"
+    }
+    return "Password is too weak. Please use a stronger password"
+  }
+
+  // Email validation errors
+  if (message.includes('invalid_email') || message.includes('email')) {
+    return "Please enter a valid email address"
+  }
+
+  // User already exists
+  if (message.includes('already_registered') || message.includes('already exists')) {
+    return "An account with this email already exists"
+  }
+
+  // Rate limiting
+  if (message.includes('rate_limit') || status === 429) {
+    return "Too many attempts. Please wait a moment and try again"
+  }
+
+  // Network/server errors
+  if (status && status >= 500) {
+    return "Server error. Please try again later"
+  }
+
+  // Default fallback
+  return errorMessage || "Registration failed. Please try again"
 }
 
 /**
@@ -51,9 +112,9 @@ export async function createUser(
  *
  * @param email - The email address of the user
  * @param password - The password of the user
- * @returns A UserPayload object if authentication is successful, null otherwise
+ * @returns An AuthResult object with success status and user data or error message
  */
-export async function authenticateUser(email: string, password: string): Promise<UserPayload | null> {
+export async function authenticateUser(email: string, password: string): Promise<AuthResult> {
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
@@ -61,7 +122,11 @@ export async function authenticateUser(email: string, password: string): Promise
 
   if (error) {
     console.error("Error authenticating user:", error)
-    return null
+    return {
+      success: false,
+      error: getLoginErrorMessage(error.message, error.status),
+      code: error.status?.toString()
+    }
   }
 
   if (data.user) {
@@ -73,13 +138,57 @@ export async function authenticateUser(email: string, password: string): Promise
 
     if (profileError) {
       console.error("Error fetching user profile:", profileError)
-      return null
+      return {
+        success: false,
+        error: "Failed to load user profile. Please try again."
+      }
     }
 
-    return { id: data.user.id, email: data.user.email!, role: profileData.role }
+    return {
+      success: true,
+      user: { id: data.user.id, email: data.user.email!, role: profileData.role }
+    }
   }
 
-  return null
+  return {
+    success: false,
+    error: "Login failed. Please try again."
+  }
+}
+
+/**
+ * Convert Supabase login errors to user-friendly messages
+ */
+function getLoginErrorMessage(errorMessage: string, status?: number): string {
+  const message = errorMessage.toLowerCase()
+
+  // Invalid credentials
+  if (message.includes('invalid_credentials') || message.includes('invalid login')) {
+    return "Invalid email or password"
+  }
+
+  // Email not confirmed
+  if (message.includes('email_not_confirmed')) {
+    return "Please check your email and confirm your account"
+  }
+
+  // Too many requests
+  if (message.includes('rate_limit') || status === 429) {
+    return "Too many login attempts. Please wait a moment and try again"
+  }
+
+  // Account locked/disabled
+  if (message.includes('account_locked') || message.includes('disabled')) {
+    return "Account is temporarily locked. Please contact support"
+  }
+
+  // Network/server errors
+  if (status && status >= 500) {
+    return "Server error. Please try again later"
+  }
+
+  // Default fallback
+  return "Login failed. Please check your credentials and try again"
 }
 
 /**

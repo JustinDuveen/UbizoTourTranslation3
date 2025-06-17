@@ -6,15 +6,16 @@ export async function POST(request: Request) {
   const { email, password } = await request.json()
 
   console.log("Login attempt for:", email)
-  const user = await authenticateUser(email, password)
-  console.log("Authenticated user:", user)
-  if (!user) {
-    console.log("Authentication failed")
-    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+  const result = await authenticateUser(email, password)
+  console.log("Authentication result:", result)
+
+  if (!result.success) {
+    console.log("Authentication failed:", result.error)
+    return NextResponse.json({ error: result.error }, { status: 401 })
   }
 
-  const token = generateToken(user)
-  
+  const token = generateToken(result.user)
+
   // Set the token as an HTTP-only cookie
   cookies().set('token', token, {
     httpOnly: true,
@@ -23,12 +24,12 @@ export async function POST(request: Request) {
     path: '/'
   })
 
-  const response = { 
+  const response = {
     token,
     user: {
-      id: user.id,
-      email: user.email,
-      role: user.role
+      id: result.user.id,
+      email: result.user.email,
+      role: result.user.role
     }
   }
   console.log("Login response:", response)

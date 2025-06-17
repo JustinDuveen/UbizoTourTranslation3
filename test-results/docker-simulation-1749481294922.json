@@ -1,0 +1,182 @@
+{
+  "timestamp": "2025-06-09T15:01:23.065Z",
+  "environment": "docker-simulation",
+  "tests": {
+    "Application Health": {
+      "status": "PASS",
+      "details": {
+        "status": 200,
+        "hasContent": true,
+        "containsReact": false
+      },
+      "timestamp": "2025-06-09T15:01:23.338Z"
+    },
+    "CORS Configuration": {
+      "status": "FAIL",
+      "details": {
+        "corsHeaders": {
+          "access-control-allow-credentials": "true"
+        },
+        "socketIOStatus": 400,
+        "hasCORSSupport": false
+      },
+      "timestamp": "2025-06-09T15:01:23.346Z"
+    },
+    "WebSocket Endpoint": {
+      "status": "PASS",
+      "details": {
+        "status": 400,
+        "responseContainsSocketIO": false,
+        "responseSnippet": "{\"code\":0,\"message\":\"Transport unknown\"}"
+      },
+      "timestamp": "2025-06-09T15:01:23.350Z"
+    },
+    "API /api/session": {
+      "status": "PASS",
+      "details": {
+        "status": 401,
+        "hasJSONResponse": true
+      },
+      "timestamp": "2025-06-09T15:01:23.570Z"
+    },
+    "API /api/auth/check": {
+      "status": "PASS",
+      "details": {
+        "status": 401,
+        "hasJSONResponse": true
+      },
+      "timestamp": "2025-06-09T15:01:23.823Z"
+    },
+    "API /api/tour/languages": {
+      "status": "PASS",
+      "details": {
+        "status": 401,
+        "hasJSONResponse": true
+      },
+      "timestamp": "2025-06-09T15:01:24.073Z"
+    },
+    "API Endpoints Overall": {
+      "status": "PASS",
+      "details": {
+        "passedEndpoints": 3,
+        "totalEndpoints": 3
+      },
+      "timestamp": "2025-06-09T15:01:24.073Z"
+    },
+    "Auth Page /login": {
+      "status": "PASS",
+      "details": {
+        "status": 200,
+        "hasLoginForm": true
+      },
+      "timestamp": "2025-06-09T15:01:32.086Z"
+    },
+    "Auth Page /register": {
+      "status": "PASS",
+      "details": {
+        "status": 200,
+        "hasLoginForm": true
+      },
+      "timestamp": "2025-06-09T15:01:34.725Z"
+    },
+    "Auth Page /guide": {
+      "status": "PASS",
+      "details": {
+        "status": 307,
+        "redirectLocation": "/login",
+        "redirectsToLogin": true
+      },
+      "timestamp": "2025-06-09T15:01:34.816Z"
+    },
+    "Auth Page /attendee": {
+      "status": "PASS",
+      "details": {
+        "status": 307,
+        "redirectLocation": "/login",
+        "redirectsToLogin": true
+      },
+      "timestamp": "2025-06-09T15:01:34.876Z"
+    },
+    "Environment Configuration": {
+      "status": "PASS",
+      "details": {
+        "envFile": ".env.docker",
+        "hasFile": true,
+        "hasCORSOrigins": true,
+        "hasXirsysConfig": true,
+        "hasJWTSecret": true,
+        "hasRedisURL": true
+      },
+      "timestamp": "2025-06-09T15:01:34.881Z"
+    },
+    "Docker Files": {
+      "status": "PASS",
+      "details": {
+        "filesFound": 4,
+        "totalFiles": 4,
+        "fileDetails": {
+          "Dockerfile": {
+            "exists": true,
+            "size": 428,
+            "modified": "2025-06-09T14:02:51.749Z"
+          },
+          "docker-compose.yml": {
+            "exists": true,
+            "size": 1180,
+            "modified": "2025-06-09T14:52:51.916Z"
+          },
+          "Dockerfile.test": {
+            "exists": true,
+            "size": 763,
+            "modified": "2025-06-09T14:03:25.689Z"
+          },
+          ".dockerignore": {
+            "exists": true,
+            "size": 251,
+            "modified": "2025-06-09T14:04:57.301Z"
+          }
+        }
+      },
+      "timestamp": "2025-06-09T15:01:34.891Z"
+    },
+    "WebRTC Implementation": {
+      "status": "PASS",
+      "details": {
+        "webrtcFilesFound": 3,
+        "totalExpected": 3,
+        "analysisResults": {
+          "lib/webrtc.ts": {
+            "exists": true,
+            "hasSocketIO": false,
+            "hasICEHandling": true,
+            "hasXirsysConfig": true,
+            "hasTURNServers": true
+          },
+          "lib/guideWebRTC.ts": {
+            "exists": true,
+            "hasSocketIO": false,
+            "hasICEHandling": true,
+            "hasXirsysConfig": true,
+            "hasTURNServers": true
+          },
+          "components/GuideWebRTCManager.tsx": {
+            "exists": true,
+            "hasSocketIO": false,
+            "hasICEHandling": false,
+            "hasXirsysConfig": false,
+            "hasTURNServers": false
+          }
+        }
+      },
+      "timestamp": "2025-06-09T15:01:34.921Z"
+    }
+  },
+  "summary": {
+    "total": 14,
+    "passed": 13,
+    "failed": 1
+  },
+  "recommendations": [
+    "Verify CORS configuration for Docker containers"
+  ]
+}

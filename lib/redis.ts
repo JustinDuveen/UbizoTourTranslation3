@@ -4,50 +4,89 @@ import { createClient } from "redis"
 // Initialize connection state and client
 let isConnected = false
 let client: any = null
+let connectionPromise: Promise<any> | null = null
 
-// Function to get connected client
+// Function to get connected client with improved connection management
 export async function getRedisClient() {
-  // Check if client exists and is connected
+  // If we already have a connected client, return it immediately
   if (client && isConnected) {
     try {
-      // Check if client is still connected by pinging
-      await client.ping();
-      return client;
+      // Quick connection check without ping to reduce latency
+      if (client.isReady) {
+        return client;
+      }
     } catch (error) {
-      console.log("Redis client disconnected, reconnecting...");
-      // Client is disconnected, will create a new one
+      // If there's an error, we'll reconnect below
       isConnected = false;
       client = null;
     }
   }
 
+  // If we're already in the process of connecting, wait for that connection
+  if (connectionPromise) {
+    return await connectionPromise;
+  }
+
   // Connect to Redis if not already connected or if previous connection is invalid
   if (!isConnected) {
+    connectionPromise = connectToRedis();
     try {
-      client = createClient({
-        url: `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
-        password: process.env.REDIS_PASSWORD || undefined,
-        socket: {
-          reconnectStrategy: (retries) => {
-            // Exponential backoff with max delay of 10 seconds
-            return Math.min(retries * 100, 10000);
-          }
-        }
-      })
-
-      client.on("error", (err: Error) => console.log("Redis Client Error", err))
-      client.on("reconnecting", () => console.log("Redis client reconnecting..."))
-      client.on("connect", () => console.log("Redis client connected"))
-
-      await client.connect()
-      isConnected = true
-      console.log("Redis client connected successfully")
-    } catch (error) {
-      console.error("Failed to connect to Redis:", error)
-      throw error
+      client = await connectionPromise;
+      return client;
+    } finally {
+      connectionPromise = null;
     }
   }
-  return client
+  return client;
+}
+
+async function connectToRedis() {
+  try {
+    const newClient = createClient({
+      url: `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
+      password: process.env.REDIS_PASSWORD || undefined,
+      socket: {
+        reconnectStrategy: (retries) => {
+          // Faster reconnection for development
+          return Math.min(retries * 50, 5000);
+        },
+        connectTimeout: 5000,
+        lazyConnect: true
+      }
+    })
+
+    // Reduce logging noise in development
+    newClient.on("error", (err: Error) => {
+      if (!err.message.includes('ECONNREFUSED')) {
+        console.log("Redis Client Error", err);
+      }
+    });
+
+    // Only log initial connection, not reconnections
+    let hasConnectedBefore = false;
+    newClient.on("connect", () => {
+      if (!hasConnectedBefore) {
+        console.log("Redis client connected");
+        hasConnectedBefore = true;
+      }
+    });
+
+    await newClient.connect();
+    isConnected = true;
+    client = newClient;
+
+    // Only log success message once
+    if (!hasConnectedBefore) {
+      console.log("Redis client connected successfully");
+    }
+
+    return newClient;
+  } catch (error) {
+    console.error("Failed to connect to Redis:", error);
+    isConnected = false;
+    client = null;
+    throw error;
+  }
 }
 
 // Export the getRedisClient function as the default export
@@ -88,6 +127,14 @@ export async function executeRedisTransaction(
   let attempt = 0
   let lastError: Error | null = null
 
+  // Validate operations before attempting execution
+  const validationErrors = validateTransactionOperations(operations);
+  if (validationErrors.length > 0) {
+    console.error(`${logPrefix} Transaction validation failed:`);
+    validationErrors.forEach(error => console.error(`${logPrefix} - ${error}`));
+    throw new Error(`Transaction validation failed: ${validationErrors[0]}`);
+  }
+
   while (attempt < maxRetries) {
     attempt++
     try {
@@ -98,7 +145,43 @@ export async function executeRedisTransaction(
 
       // Add all operations to the transaction
       for (const [command, ...args] of operations) {
-        multi[command.toLowerCase()](...args)
+        const cmd = command.toLowerCase();
+        try {
+          // Use direct method calls instead of bracket notation
+          switch (cmd) {
+            case 'get':
+              multi.get(...args);
+              break;
+            case 'set':
+              multi.set(...args);
+              break;
+            case 'del':
+              multi.del(...args);
+              break;
+            case 'srem':
+              multi.sRem(...args);
+              break;
+            case 'sadd':
+              multi.sAdd(...args);
+              break;
+            case 'exists':
+              multi.exists(...args);
+              break;
+            case 'expire':
+              multi.expire(...args);
+              break;
+            case 'ttl':
+              multi.ttl(...args);
+              break;
+            default:
+              console.error(`${logPrefix} Unsupported Redis command: ${command}`);
+              throw new Error(`Unsupported Redis command: ${command}`);
+          }
+        } catch (error) {
+          console.error(`${logPrefix} Error executing command ${command} with args:`, args);
+          console.error(`${logPrefix} Error details:`, error);
+          throw error;
+        }
       }
 
       // Execute the transaction
@@ -115,15 +198,58 @@ export async function executeRedisTransaction(
       lastError = error instanceof Error ? error : new Error(String(error))
       console.error(`${logPrefix} Transaction failed (attempt ${attempt}/${maxRetries}):`, lastError.message)
 
+      // Log more detailed error information
+      console.error(`${logPrefix} Transaction operations:`, operations.map(([cmd, ...args]) => ({ command: cmd, args })))
+      console.error(`${logPrefix} Error stack:`, error instanceof Error ? error.stack : 'No stack trace available')
+
       if (attempt < maxRetries) {
         // Wait before retrying with exponential backoff
         const delay = Math.min(100 * Math.pow(2, attempt), 2000)
+        console.log(`${logPrefix} Retrying in ${delay}ms...`)
         await new Promise(resolve => setTimeout(resolve, delay))
       }
     }
   }
 
   throw lastError || new Error('Transaction failed after maximum retries')
+}
+
+/**
+ * Validate if a Redis command is supported
+ *
+ * @param command The Redis command to validate
+ * @returns True if the command is supported, false otherwise
+ */
+export function isCommandSupported(command: string): boolean {
+  const supportedCommands = [
+    'get', 'set', 'del', 'srem', 'sadd', 'exists', 'expire', 'ttl'
+  ];
+  return supportedCommands.includes(command.toLowerCase());
+}
+
+/**
+ * Validate transaction operations before execution
+ *
+ * @param operations Array of Redis operations to validate
+ * @returns Array of validation errors, empty if all operations are valid
+ */
+export function validateTransactionOperations(operations: RedisTransactionOperation[]): string[] {
+  const errors: string[] = [];
+
+  for (let i = 0; i < operations.length; i++) {
+    const [command] = operations[i];
+
+    if (!command || typeof command !== 'string') {
+      errors.push(`Operation ${i}: Invalid command format`);
+      continue;
+    }
+
+    if (!isCommandSupported(command)) {
+      errors.push(`Operation ${i}: Unsupported command '${command}'`);
+    }
+  }
+
+  return errors;
 }
 
 /**

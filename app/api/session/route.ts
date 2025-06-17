@@ -38,7 +38,18 @@ export async function GET() {
     const apiBody = JSON.stringify({
       model: "gpt-4o-mini-realtime-preview-2024-12-17",
       voice: "verse",
-      modalities: ["audio", "text"]
+      modalities: ["audio", "text"],
+      // Add default system instructions for translation (will be overridden per language)
+      instructions: "You are an expert live Tour Translator. You will receive specific language instructions via session updates. Wait for language-specific instructions before beginning translation.",
+      // Configure VAD settings for more responsive translations
+      turn_detection: {
+        // Required type parameter for turn detection - use server_vad for faster response
+        type: "server_vad",
+        // Set a shorter silence duration for faster response (300ms)
+        silence_duration_ms: 300,
+        // Keep automatic response creation
+        create_response: true
+      }
     });
 
     console.log("OpenAI API request:", apiUrl);

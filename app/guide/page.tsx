@@ -23,8 +23,8 @@ function Spinner() {
 export default function GuidePage() {
   const router = useRouter()
   const [translations, setTranslations] = useState<Record<string, string>>({})
-  const [primaryLanguage, setPrimaryLanguage] = useState<string>("English")
-  const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["English"])
+  const [primaryLanguage, setPrimaryLanguage] = useState<string>("") // Will be set to first selected language
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([])
   interface Attendee {
     id: string;
     name: string;
@@ -42,7 +42,6 @@ export default function GuidePage() {
   const [tourCreated, setTourCreated] = useState<boolean>(false); // State to track if tour is created
   const [copySuccess, setCopySuccess] = useState<string>("");
 
-  const routerPush = useRouter().push
 
   // Initialize AudioContext and play a silent sound to get user consent for audio playback
   const initializeAudioContext = () => {
@@ -87,10 +86,19 @@ export default function GuidePage() {
         }
       }
 
-      // Make sure primary language is included in selected languages
-      let finalSelectedLanguages = [...selectedLanguages];
-      if (!finalSelectedLanguages.includes(primaryLanguage)) {
-        finalSelectedLanguages.push(primaryLanguage);
+      // Validate at least one language is selected
+      if (selectedLanguages.length === 0) {
+        setError("Please select at least one language before starting the tour");
+        setIsLoading(false);
+        return;
+      }
+
+      // Use selected languages as is
+      const finalSelectedLanguages = [...selectedLanguages];
+
+      // Ensure primary language is set to first selected language
+      if (!primaryLanguage || !selectedLanguages.includes(primaryLanguage)) {
+        setPrimaryLanguage(selectedLanguages[0]);
       }
 
       console.log("Sending tour start request with languages:", finalSelectedLanguages, "primary:", primaryLanguage)
@@ -140,6 +148,8 @@ export default function GuidePage() {
 
       // Initialize WebRTC for each selected language
       console.log("Initializing WebRTC for languages:", finalSelectedLanguages);
+      const initializationErrors = [];
+
       for (const language of finalSelectedLanguages) {
         // Ensure proper case for language names to match audio file naming
         const normalizedLanguage = language.charAt(0).toUpperCase() + language.slice(1).toLowerCase();
@@ -151,10 +161,26 @@ export default function GuidePage() {
             [normalizedLanguage]: text
           }))
         }
-        await initGuideWebRTC(handleTranslationUpdate, normalizedLanguage, handleAttendeeUpdates, tourData.tourId)
-        console.log(`WebRTC initialized for ${normalizedLanguage}`);
+
+        try {
+          await initGuideWebRTC(handleTranslationUpdate, normalizedLanguage, handleAttendeeUpdates, tourData.tourId, tourData.tourCode)
+          console.log(`WebRTC initialized for ${normalizedLanguage}`);
+        } catch (error) {
+          console.error(`Failed to initialize WebRTC for ${normalizedLanguage}:`, error);
+          initializationErrors.push({ language: normalizedLanguage, error });
+          // Continue with other languages instead of stopping completely
+        }
       }
-      console.log("WebRTC initialized successfully for all languages")
+
+      if (initializationErrors.length > 0) {
+        console.warn(`WebRTC initialization completed with ${initializationErrors.length} errors:`, initializationErrors);
+        if (initializationErrors.length === finalSelectedLanguages.length) {
+          // All languages failed to initialize
+          throw new Error("Failed to initialize WebRTC for any language");
+        }
+      } else {
+        console.log("WebRTC initialized successfully for all languages");
+      }
 
       setIsTourActive(true)
       setIsLoading(false)
@@ -180,7 +206,7 @@ export default function GuidePage() {
       if (!response.ok) {
         const data = await response.json()
         if (response.status === 401) {
-          routerPush("/login")
+          router.push("/login")
           return
         }
         throw new Error(data.error || "Failed to end tour")
@@ -228,21 +254,13 @@ export default function GuidePage() {
 
   // Clean up WebRTC on unmount if the tour is active
   useEffect(() => {
-    console.log("Tour active state changed:", isTourActive)
     return () => {
-      if (isTourActive && !isTourEnding) {
-        console.log("Cleaning up WebRTC on unmount")
-        cleanupGuideWebRTC()
-      }
+      console.log("Cleaning up WebRTC on unmount")
+      cleanupGuideWebRTC()
     }
-  }, [isTourActive]);
+  }, []);
 
-  // Keep primary language in selected languages
-  useEffect(() => {
-    if (!selectedLanguages.includes(primaryLanguage)) {
-      setSelectedLanguages(prev => [...prev, primaryLanguage]);
-    }
-  }, [primaryLanguage, selectedLanguages]);
+  // Primary language is now automatically derived from selected languages
 
   if (isLoading) {
     return (
@@ -268,20 +286,12 @@ export default function GuidePage() {
         <>
           <div className="flex flex-col items-center gap-4 mb-6">
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Primary Language</label>
-                <LanguageSelector
-                  language={primaryLanguage}
-                  setLanguage={setPrimaryLanguage}
-                  connectToGuide={() => {}}
-                  disabled={isTourActive}
-                />
-              </div>
+              {/* Primary Language dropdown removed - now using first selected language */}
 
               <div>
-                <label className="block text-sm font-medium mb-1">Additional Languages (Optional)</label>
+                <label className="block text-sm font-medium mb-1">Select Languages for Translation</label>
                 <div className="flex flex-wrap gap-2">
-                  {["French", "German", "Spanish", "Italian", "Dutch", "Portuguese"].map(lang => (
+                  {["English", "French", "German", "Spanish", "Italian", "Dutch", "Portuguese"].map(lang => (
                     <label key={lang} className="inline-flex items-center">
                       <input
                         type="checkbox"
@@ -291,21 +301,36 @@ export default function GuidePage() {
                           console.log(`Language checkbox ${formattedLang} changed to ${e.target.checked}`);
 
                           if (e.target.checked) {
+                            // Add language to selected languages
                             setSelectedLanguages(prev => {
                               const newLangs = [...prev, formattedLang];
                               console.log(`Added ${formattedLang}, new selected languages:`, newLangs);
+
+                              // If this is the first language or no primary language, set it as primary
+                              if (newLangs.length === 1 || !primaryLanguage) {
+                                setPrimaryLanguage(formattedLang);
+                              }
+
                               return newLangs;
                             });
                           } else {
-                            // Don't remove primary language
+                            // Remove language from selected languages
                             setSelectedLanguages(prev => {
-                              const newLangs = prev.filter(l => l !== formattedLang || l === primaryLanguage);
+                              const newLangs = prev.filter(l => l !== formattedLang);
                               console.log(`Removed ${formattedLang}, new selected languages:`, newLangs);
+
+                              // If primary language is removed, update it
+                              if (formattedLang === primaryLanguage && newLangs.length > 0) {
+                                setPrimaryLanguage(newLangs[0]);
+                              } else if (newLangs.length === 0) {
+                                setPrimaryLanguage("");
+                              }
+
                               return newLangs;
                             });
                           }
                         }}
-                        disabled={isTourActive || lang === primaryLanguage}
+                        disabled={isTourActive}
                         className="form-checkbox h-4 w-4 text-blue-600"
                       />
                       <span className="ml-2 text-sm">{lang}</span>
@@ -358,23 +383,7 @@ export default function GuidePage() {
               isMuted={isMuted}
             />
 
-            {/* Monitor Controls - Only shown in development mode */}
-            {process.env.NODE_ENV !== 'production' && isTourActive && (
-              <div className="flex space-x-2 mt-4 justify-center">
-                <button
-                  onClick={() => TranslationMonitor.toggleMinimize()}
-                  className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
-                >
-                  Toggle Monitor Size
-                </button>
-                <button
-                  onClick={() => TranslationMonitor.cleanup()}
-                  className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
-                >
-                  Close Monitor
-                </button>
-              </div>
-            )}
+
 
             <AttendeeList attendees={attendees} />
           </div>

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Security-Policy" content="connect-src *">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xirsys TURN/STUN Server Test</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #569cd6;
+            text-align: center;
+        }
+        .test-section {
+            background-color: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .log {
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        button {
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #1177bb;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.success { background-color: #4caf50; color: white; }
+        .status.failure { background-color: #f44336; color: white; }
+        .status.pending { background-color: #ff9800; color: white; }
+        .server-info {
+            background-color: #2d2d30;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            border-left: 4px solid #569cd6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Xirsys TURN/STUN Server Configuration Test</h1>
+        
+        <div class="test-section">
+            <button id="testAPI" onclick="testXirsysAPI()">Test Xirsys API</button>
+            <button id="testConnectivity" onclick="testXirsysConnectivity()">Test Connectivity</button>
+            <button id="clearCache" onclick="clearXirsysCache()">Clear Cache</button>
+            <span id="testStatus" class="status pending">Ready to Test</span>
+        </div>
+
+        <div class="test-section">
+            <h3>Xirsys Server Information</h3>
+            <div id="serverInfo" class="server-info">
+                Click "Test Xirsys API" to fetch server information...
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test Results Log</h3>
+            <div id="logOutput" class="log">Click any test button to start testing your Xirsys configuration...</div>
+        </div>
+    </div>
+
+    <script>
+        function log(message) {
+            const logOutput = document.getElementById('logOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            logOutput.textContent += `[${timestamp}] ${message}\n`;
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('logOutput').textContent = '';
+        }
+
+        function setStatus(text, type) {
+            const status = document.getElementById('testStatus');
+            status.textContent = text;
+            status.className = `status ${type}`;
+        }
+
+        function updateServerInfo(servers) {
+            const serverInfo = document.getElementById('serverInfo');
+            if (!servers || servers.length === 0) {
+                serverInfo.innerHTML = 'No servers available';
+                return;
+            }
+
+            let html = `<strong>Found ${servers.length} Xirsys servers:</strong><br><br>`;
+            servers.forEach((server, index) => {
+                const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+                html += `<div style="margin-bottom: 10px;">`;
+                html += `<strong>Server ${index + 1}:</strong><br>`;
+                urls.forEach(url => {
+                    html += `&nbsp;&nbsp;• ${url}<br>`;
+                });
+                if (server.username) {
+                    html += `&nbsp;&nbsp;• Username: ${server.username}<br>`;
+                    html += `&nbsp;&nbsp;• Has Credentials: Yes<br>`;
+                }
+                html += `</div>`;
+            });
+            serverInfo.innerHTML = html;
+        }
+
+        async function testXirsysAPI() {
+            const button = document.getElementById('testAPI');
+            button.disabled = true;
+            clearLog();
+            setStatus('Testing API...', 'pending');
+            
+            try {
+                log('=== Testing Xirsys API Endpoint ===');
+                log('Fetching ICE servers from /api/xirsys/ice...');
+                
+                const response = await fetch('/api/xirsys/ice', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                log(`API Response Status: ${response.status} ${response.statusText}`);
+
+                if (!response.ok) {
+                    throw new Error(`API request failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                log(`API Response: ${JSON.stringify(data, null, 2)}`);
+
+                if (data.success && data.iceServers) {
+                    log(`✅ Successfully fetched ${data.iceServers.length} ICE servers`);
+                    log(`Cache status: ${data.cached ? 'Cached' : 'Fresh'}`);
+                    
+                    updateServerInfo(data.iceServers);
+                    setStatus('API Test Passed', 'success');
+
+                    // Log each server
+                    data.iceServers.forEach((server, index) => {
+                        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+                        log(`Server ${index + 1}: ${urls.join(', ')}`);
+                        if (server.username) {
+                            log(`  - Username: ${server.username}`);
+                            log(`  - Has Credentials: Yes`);
+                        }
+                    });
+                } else {
+                    throw new Error('Invalid API response format');
+                }
+
+            } catch (error) {
+                log(`❌ API test failed: ${error.message}`);
+                setStatus('API Test Failed', 'failure');
+                updateServerInfo([]);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function testXirsysConnectivity() {
+            const button = document.getElementById('testConnectivity');
+            button.disabled = true;
+            clearLog();
+            setStatus('Testing Connectivity...', 'pending');
+            
+            try {
+                log('=== Testing Xirsys Server Connectivity ===');
+                
+                // First fetch the servers
+                const response = await fetch('/api/xirsys/ice');
+                const data = await response.json();
+                
+                if (!data.success || !data.iceServers) {
+                    throw new Error('Failed to fetch ICE servers for connectivity test');
+                }
+
+                const servers = data.iceServers;
+                log(`Testing connectivity to ${servers.length} Xirsys servers...`);
+
+                let workingServers = 0;
+                let totalServers = 0;
+
+                for (const server of servers) {
+                    const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+                    
+                    for (const url of urls) {
+                        totalServers++;
+                        log(`\n--- Testing ${url} ---`);
+                        
+                        const isWorking = await testSingleServer(server, url);
+                        if (isWorking) {
+                            workingServers++;
+                            log(`✅ ${url} - Working`);
+                        } else {
+                            log(`❌ ${url} - Failed`);
+                        }
+                    }
+                }
+
+                log(`\n=== CONNECTIVITY TEST RESULTS ===`);
+                log(`Working servers: ${workingServers}/${totalServers}`);
+                log(`Success rate: ${((workingServers/totalServers)*100).toFixed(1)}%`);
+
+                if (workingServers > 0) {
+                    setStatus(`${workingServers}/${totalServers} Working`, 'success');
+                } else {
+                    setStatus('All Servers Failed', 'failure');
+                }
+
+            } catch (error) {
+                log(`❌ Connectivity test failed: ${error.message}`);
+                setStatus('Connectivity Test Failed', 'failure');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function testSingleServer(server, url) {
+            return new Promise((resolve) => {
+                const pc = new RTCPeerConnection({
+                    iceServers: [{
+                        urls: url,
+                        username: server.username,
+                        credential: server.credential
+                    }]
+                });
+
+                let candidateReceived = false;
+                const timeout = setTimeout(() => {
+                    pc.close();
+                    resolve(candidateReceived);
+                }, 5000);
+
+                pc.onicecandidate = (event) => {
+                    if (event.candidate && !candidateReceived) {
+                        candidateReceived = true;
+                        clearTimeout(timeout);
+                        pc.close();
+                        resolve(true);
+                    }
+                };
+
+                pc.onicegatheringstatechange = () => {
+                    if (pc.iceGatheringState === 'complete' && !candidateReceived) {
+                        clearTimeout(timeout);
+                        pc.close();
+                        resolve(false);
+                    }
+                };
+
+                // Create data channel and offer to trigger ICE gathering
+                pc.createDataChannel('test');
+                pc.createOffer().then(offer => pc.setLocalDescription(offer));
+            });
+        }
+
+        async function clearXirsysCache() {
+            const button = document.getElementById('clearCache');
+            button.disabled = true;
+            
+            try {
+                log('Clearing Xirsys cache...');
+                
+                const response = await fetch('/api/xirsys/ice', {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    log('✅ Cache cleared successfully');
+                    setStatus('Cache Cleared', 'success');
+                } else {
+                    throw new Error(`Failed to clear cache: ${response.status}`);
+                }
+
+            } catch (error) {
+                log(`❌ Failed to clear cache: ${error.message}`);
+                setStatus('Cache Clear Failed', 'failure');
+            } finally {
+                button.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

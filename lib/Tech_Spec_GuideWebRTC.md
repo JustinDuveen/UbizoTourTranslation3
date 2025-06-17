@@ -231,6 +231,54 @@ Fetches a new key from /api/session.
 
 Updates the EPHEMERAL_KEY variable.
 
+## WebRTC Signaling Fixes (Expert-Level Implementation)
+
+### Critical Signaling Order Enforcement
+
+The implementation now strictly follows RFC 3264 WebRTC signaling specification:
+
+1. **Proper Remote Description Timing**: Remote description (SDP answer) MUST be set before any ICE candidate processing
+2. **ICE Candidate Polling Delay**: `pollForAttendeeIceCandidates()` only starts AFTER `setRemoteDescription()` succeeds
+3. **State Validation**: All ICE operations check for `pc.remoteDescription` existence before proceeding
+
+### SDP M-Line Validation & Auto-Fix
+
+Implemented comprehensive SDP validation system:
+
+1. **M-Line Extraction**: `extractMLines()` parses SDP to identify media types in order
+2. **Order Validation**: `validateMLineOrder()` compares offer vs answer m-line ordering
+3. **Automatic Repair**: `fixMLineOrder()` reorders answer SDP to match offer when mismatches detected
+4. **Detailed Logging**: Shows exactly what SDP issues are found and how they're resolved
+
+### Enhanced Error Recovery
+
+1. **Duplicate Handler Removal**: Eliminated duplicate event handlers that could cause conflicts
+2. **Connection State Monitoring**: Enhanced state checking before WebRTC operations
+3. **Graceful Fallbacks**: Auto-repair mechanisms for common signaling violations
+4. **Comprehensive Diagnostics**: Detailed logging shows exactly where signaling succeeds/fails
+
+### Implementation Details
+
+**Fixed Signaling Flow:**
+```
+Guide: createOffer() → setLocalDescription(offer) → store offer in Redis
+Attendee: fetch offer → setRemoteDescription(offer) → createAnswer() → setLocalDescription(answer) → send answer
+Guide: receive answer → validate SDP m-lines → fix if needed → setRemoteDescription(answer) → START ICE polling
+```
+
+**Key Functions Added:**
+- `extractMLines(sdp: string): string[]` - Extracts media types from SDP
+- `validateMLineOrder(offerMLines: string[], answerMLines: string[]): boolean` - Validates m-line consistency
+- `fixMLineOrder(answerSdp: string, offerMLines: string[]): string` - Auto-fixes SDP ordering issues
+
+**Error Prevention:**
+- Remote description validation before ICE candidate processing
+- SDP m-line ordering validation and auto-correction
+- Duplicate event handler elimination
+- Enhanced connection state monitoring
+
+### Key Renewal Integration
+
 Schedules the next renewal.
 
 Crucially, if an OpenAIConnection exists, the current implementation re-initializes the entire connection for that language by calling initGuideWebRTC again after closing the old one. This ensures the new key is used for any subsequent API interactions (like potential re-negotiations, though the primary use is the initial SDP exchange).
@@ -363,7 +411,7 @@ sendClosingMessage: Attempts graceful shutdown notification to OpenAI using a se
 
 Backend API: Requires a backend implementing the specified /api/ endpoints for session management, offer/answer exchange, ICE candidate relaying, and persistence operations (like storing language maps or translations, likely using Redis).
 
-ICE Servers: Configuration requires STUN and potentially TURN server URLs and credentials. TURN is recommended for reliability. Note that in the provided code's setupOpenAIConnection function, the turns: URL entry in the iceServers array is currently commented out. Attendee connection configurations might still include or utilize turns:.
+ICE Servers: Configuration exclusively uses Xirsys cloud-hosted TURN/STUN servers for optimal global connectivity. The system automatically fetches ICE server configurations from Xirsys API with fallback to public servers if needed.
 
 Audio Files: Assumes instruction audio files are available at paths like audio/english_to_<language>_Translation_Instruction.mp3.
 

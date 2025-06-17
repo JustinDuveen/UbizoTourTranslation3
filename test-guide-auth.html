@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guide Authentication Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        .log { max-height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Guide Authentication & WebRTC Test</h1>
+    
+    <div class="test-section">
+        <h2>1. Check Authentication Status</h2>
+        <button onclick="checkAuth()">Check Guide Authentication</button>
+        <div id="auth-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Test Offer Storage</h2>
+        <input type="text" id="test-tour-id" placeholder="Tour ID (e.g., tour_1747681346645_3lty2j4vcj)" style="width: 300px;">
+        <button onclick="testOfferStorage()">Test Store Offer</button>
+        <div id="offer-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Check Cookies</h2>
+        <button onclick="checkCookies()">Check Browser Cookies</button>
+        <div id="cookie-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Test API Endpoints</h2>
+        <button onclick="testEndpoints()">Test All Endpoints</button>
+        <div id="endpoint-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>5. Console Logs</h2>
+        <div id="console-logs" class="log"></div>
+    </div>
+
+    <script>
+        // Capture console logs
+        const originalLog = console.log;
+        const originalError = console.error;
+        const logContainer = document.getElementById('console-logs');
+
+        function addLog(type, message) {
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: ${type === 'error' ? 'red' : 'blue'}">[${new Date().toLocaleTimeString()}] ${type.toUpperCase()}:</span> ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            addLog('log', args.join(' '));
+        };
+
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            addLog('error', args.join(' '));
+        };
+
+        async function checkAuth() {
+            const resultDiv = document.getElementById('auth-result');
+            resultDiv.innerHTML = '<p>Checking authentication...</p>';
+
+            try {
+                // Try to access a protected endpoint
+                const response = await fetch('/api/auth/me', {
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h3>✅ Authentication Success</h3>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="error">
+                            <h3>❌ Authentication Failed</h3>
+                            <p>Status: ${response.status}</p>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Authentication Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testOfferStorage() {
+            const resultDiv = document.getElementById('offer-result');
+            const tourId = document.getElementById('test-tour-id').value || 'tour_1747681346645_3lty2j4vcj';
+            
+            resultDiv.innerHTML = '<p>Testing offer storage...</p>';
+
+            const testOffer = {
+                type: 'offer',
+                sdp: 'v=0\r\no=- 123456789 123456789 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 127.0.0.1\r\na=rtcp:9 IN IP4 127.0.0.1\r\na=ice-ufrag:test\r\na=ice-pwd:test\r\na=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtcp-mux\r\na=rtpmap:111 opus/48000/2\r\n'
+            };
+
+            try {
+                const response = await fetch('/api/tour/offer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        language: 'spanish',
+                        tourId: tourId,
+                        offer: testOffer
+                    }),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h3>✅ Offer Storage Success</h3>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="error">
+                            <h3>❌ Offer Storage Failed</h3>
+                            <p>Status: ${response.status} - ${response.statusText}</p>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Offer Storage Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function checkCookies() {
+            const resultDiv = document.getElementById('cookie-result');
+            const cookies = document.cookie;
+            
+            if (cookies) {
+                const cookieArray = cookies.split(';').map(c => c.trim());
+                const authCookies = cookieArray.filter(c => 
+                    c.includes('token') || c.includes('auth') || c.includes('jwt') || c.includes('session')
+                );
+                
+                resultDiv.innerHTML = `
+                    <div class="${authCookies.length > 0 ? 'success' : 'warning'}">
+                        <h3>🍪 Browser Cookies</h3>
+                        <p><strong>All Cookies:</strong></p>
+                        <pre>${cookieArray.join('\n')}</pre>
+                        <p><strong>Auth-related Cookies:</strong></p>
+                        <pre>${authCookies.length > 0 ? authCookies.join('\n') : 'No auth cookies found'}</pre>
+                    </div>
+                `;
+            } else {
+                resultDiv.innerHTML = `
+                    <div class="warning">
+                        <h3>⚠️ No Cookies Found</h3>
+                        <p>No cookies are set in the browser. This could be why authentication is failing.</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testEndpoints() {
+            const resultDiv = document.getElementById('endpoint-result');
+            resultDiv.innerHTML = '<p>Testing endpoints...</p>';
+
+            const endpoints = [
+                { name: 'Auth Check', url: '/api/auth/me', method: 'GET' },
+                { name: 'Tour List', url: '/api/tour', method: 'GET' },
+                { name: 'Offer Get', url: '/api/tour/offer?tourCode=WS2QV6&language=spanish&attendeeName=test', method: 'GET' }
+            ];
+
+            let results = [];
+
+            for (const endpoint of endpoints) {
+                try {
+                    const response = await fetch(endpoint.url, {
+                        method: endpoint.method,
+                        credentials: 'include'
+                    });
+                    
+                    const data = await response.json();
+                    results.push({
+                        name: endpoint.name,
+                        status: response.status,
+                        success: response.ok,
+                        data: data
+                    });
+                } catch (error) {
+                    results.push({
+                        name: endpoint.name,
+                        status: 'ERROR',
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            const html = results.map(result => `
+                <div class="${result.success ? 'success' : 'error'}" style="margin: 10px 0; padding: 10px;">
+                    <h4>${result.success ? '✅' : '❌'} ${result.name}</h4>
+                    <p>Status: ${result.status}</p>
+                    <pre>${JSON.stringify(result.data || result.error, null, 2)}</pre>
+                </div>
+            `).join('');
+
+            resultDiv.innerHTML = html;
+        }
+
+        // Auto-run some tests on page load
+        window.onload = function() {
+            console.log('🔍 Guide Authentication Test Page Loaded');
+            checkCookies();
+        };
+    </script>
+</body>
+</html>

@@ -35,9 +35,12 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const tourCode = searchParams.get("tourCode");
   const languageParam = searchParams.get("language");
-  const language = languageParam ? languageParam.toLowerCase() : null;
 
-  console.log(`Join request received - tourCode: ${tourCode}, language: ${languageParam}`);
+  // CRITICAL FIX: Use standardized language normalization
+  const { normalizeLanguageForStorage } = await import("@/lib/redisKeys");
+  const language = languageParam ? normalizeLanguageForStorage(languageParam) : null;
+
+  console.log(`Join request received - tourCode: ${tourCode}, language: ${languageParam} (normalized: ${language})`);
 
   if (!tourCode || !language) {
     console.log(`Missing parameters - tourCode: ${tourCode}, language: ${languageParam}`);
@@ -127,10 +130,11 @@ export async function GET(request: Request) {
       );
     }
 
-    // Get WebRTC offer for this language
+    // Get WebRTC offer for this language using standardized key generation
     console.log(`[ATTENDEE] Getting offer for tour ${tourId}, language ${language}`);
-    const offerKey = `tour:${tourId}:offer:${language}`;
-    console.log(`[ATTENDEE] Using Redis key: ${offerKey}`);
+    const { getOfferKey } = await import("@/lib/redisKeys");
+    const offerKey = getOfferKey(tourId, language, false); // language already normalized
+    console.log(`[ATTENDEE] Using standardized Redis key: ${offerKey}`);
 
     // List all keys matching the pattern to debug
     const allKeys = await redisClient.keys(`tour:${tourId}:offer:*`);
@@ -141,11 +145,18 @@ export async function GET(request: Request) {
 
     if (!offerJson) {
       console.log(`No offer available for tour ${tourId}, language ${language}`);
+
+      // Enhanced readiness check - verify if guide is actually broadcasting
+      const guideStatusKey = `tour:${tourId}:guide_status`;
+      const guideStatus = await redisClient.get(guideStatusKey);
+
       return NextResponse.json({
         tourId,
         offer: null,
         streamReady: false,
-        error: "No WebRTC offer available yet"
+        guideStatus: guideStatus || 'unknown',
+        error: "Guide has not started broadcasting for this language yet. Please wait and try again.",
+        retryAfter: 3000 // Suggest retry after 3 seconds
       }, { status: 200 });
     }
 

@@ -1,0 +1,33 @@
+{
+  "timestamp": "2025-06-09T14:41:37.489Z",
+  "suites": {
+    "Basic Connectivity": {
+      "status": "FAIL",
+      "output": "[2025-06-09T14:41:37.571Z] Starting Simple WebRTC connectivity tests...\n[2025-06-09T14:41:43.114Z] ✅ Application Health Check\n[2025-06-09T14:41:45.744Z] ✅ API Endpoint /api/auth/check\n[2025-06-09T14:41:46.024Z] ✅ API Endpoint /api/session\n[2025-06-09T14:41:48.114Z] ✅ API Endpoint /api/tour/languages\n[2025-06-09T14:41:48.121Z] ✅ WebSocket Endpoint Available\n[2025-06-09T14:41:48.206Z] ❌ Page /guide: HTTP 307\n[2025-06-09T14:41:48.265Z] ❌ Page /attendee: HTTP 307\n[2025-06-09T14:41:48.271Z] Test results saved to: test-results/simple-webrtc-test-1749480108266.json\n[2025-06-09T14:41:48.272Z] \n=== TEST SUMMARY ===\n[2025-06-09T14:41:48.272Z] Total Tests: 7\n[2025-06-09T14:41:48.272Z] Passed: 5\n[2025-06-09T14:41:48.272Z] Failed: 2\n[2025-06-09T14:41:48.272Z] Success Rate: 71.4%\n[2025-06-09T14:41:48.272Z] \n=== FAILED TESTS ===\n❌ Page /guide: HTTP 307\n❌ Page /attendee: HTTP 307\n[2025-06-09T14:41:48.273Z] \n=== RECOMMENDATIONS ===\n[2025-06-09T14:41:48.273Z] ⚠️  Some tests failed. Check application configuration.\n",
+      "error": "Command failed: node test-webrtc-simple.js"
+    },
+    "Authentication Flows": {
+      "status": "PASS",
+      "output": "[2025-06-09T14:42:03.564Z] Starting Authentication Flow Tests...\n[2025-06-09T14:42:03.596Z] ❌ Browser Setup: Failed to launch the browser process!\n/home/justin/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory\n\n\nTROUBLESHOOTING: https://pptr.dev/troubleshooting\n\n",
+      "error": null
+    },
+    "Full WebRTC Testing": {
+      "status": "FAIL",
+      "output": "[2025-06-09T14:42:17.328Z] Starting WebRTC connectivity tests...\n[2025-06-09T14:42:17.356Z] ❌ Test Suite Execution: Failed to launch the browser process!\n/home/justin/.cache/puppeteer/chrome-headless-shell/linux-121.0.6167.85/chrome-headless-shell-linux64/chrome-headless-shell: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory\n\n\nTROUBLESHOOTING: https://pptr.dev/troubleshooting\n\n[2025-06-09T14:42:17.361Z] Test results saved to: test-results/webrtc-test-1749480137356.json\n[2025-06-09T14:42:17.361Z] \n=== TEST SUMMARY ===\n[2025-06-09T14:42:17.361Z] Total Tests: 1\n[2025-06-09T14:42:17.361Z] Passed: 0\n[2025-06-09T14:42:17.362Z] Failed: 1\n[2025-06-09T14:42:17.362Z] Success Rate: 0.0%\n[2025-06-09T14:42:17.362Z] \n=== FAILED TESTS ===\n❌ Test Suite Execution: Failed to launch the browser process!\n/home/justin/.cache/puppeteer/chrome-headless-shell/linux-121.0.6167.85/chrome-headless-shell-linux64/chrome-headless-shell: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory\n\n\nTROUBLESHOOTING: https://pptr.dev/troubleshooting\n\n",
+      "error": "Command failed: node test-webrtc.js\n\u001b[1m\u001b[43m\u001b[30m\n  Puppeteer old Headless deprecation warning:\u001b[0m\u001b[33m\n    In the near future `headless: true` will default to the new Headless mode\n    for Chrome instead of the old Headless implementation. For more\n    information, please see https://developer.chrome.com/articles/new-headless/.\n    Consider opting in early by passing `headless: \"new\"` to `puppeteer.launch()`\n    If you encounter any bugs, please report them to https://github.com/puppeteer/puppeteer/issues/new/choose.\u001b[0m\n\n"
+    },
+    "Comprehensive WebRTC": {
+      "status": "PASS",
+      "output": "[2025-06-09T14:42:32.116Z] Starting Comprehensive WebRTC Test Suite...\n[2025-06-09T14:42:32.142Z] ❌ Browser Setup: Failed to launch the browser process!\n/home/justin/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory\n\n\nTROUBLESHOOTING: https://pptr.dev/troubleshooting\n\n",
+      "error": null
+    }
+  },
+  "summary": {
+    "totalSuites": 4,
+    "passedSuites": 2,
+    "failedSuites": 2,
+    "totalTests": 23,
+    "passedTests": 15,
+    "failedTests": 8
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "timestamp": "2025-06-09T15:03:32.741Z",
+  "connectionFlow": {
+    "step1_registration": "PASS",
+    "step2_tourCreation": "FAIL",
+    "step3_signaling": "PASS",
+    "step4_offerAnswer": "PASS",
+    "step5_iceExchange": "PASS",
+    "step6_languages": "FAIL"
+  },
+  "validationTests": {
+    "User Registration": {
+      "status": "PASS",
+      "details": {
+        "guideRegistration": {
+          "status": 200,
+          "success": true
+        },
+        "attendeeRegistration": {
+          "status": 200,
+          "success": true
+        },
+        "testCredentials": {
+          "guide": "guide-1749481412760@test.com",
+          "attendee": "attendee-1749481417002@test.com"
+        }
+      },
+      "timestamp": "2025-06-09T15:03:38.953Z"
+    },
+    "Tour Creation": {
+      "status": "FAIL",
+      "details": {
+        "error": "HTTP 401",
+        "responseData": "{\"error\":\"Unauthorized\"}"
+      },
+      "timestamp": "2025-06-09T15:03:41.092Z"
+    },
+    "ICE Endpoint /api/tour/guide-ice?tourId=test-tour-123&language=english": {
+      "status": "PASS",
+      "details": {
+        "status": 400,
+        "hasJsonResponse": true
+      },
+      "timestamp": "2025-06-09T15:03:41.225Z"
+    },
+    "ICE Endpoint /api/tour/attendee-ice?tourId=test-tour-123&language=english&attendeeId=test-attendee-456": {
+      "status": "PASS",
+      "details": {
+        "status": 401,
+        "hasJsonResponse": true
+      },
+      "timestamp": "2025-06-09T15:03:43.378Z"
+    },
+    "ICE Endpoint /api/tour/ice-candidate": {
+      "status": "PASS",
+      "details": {
+        "status": 405,
+        "hasJsonResponse": false
+      },
+      "timestamp": "2025-06-09T15:03:45.169Z"
+    },
+    "WebRTC Signaling Endpoints": {
+      "status": "PASS",
+      "details": {
+        "passedEndpoints": 3,
+        "totalEndpoints": 3,
+        "successRate": "100.0%"
+      },
+      "timestamp": "2025-06-09T15:03:45.169Z"
+    },
+    "WebRTC Offer/Answer": {
+      "status": "PASS",
+      "details": {
+        "offerEndpoint": {
+          "status": 401,
+          "success": true
+        },
+        "answerEndpoint": {
+          "status": 400,
+          "success": true
+        },
+        "mockSDPUsed": true
+      },
+      "timestamp": "2025-06-09T15:03:50.612Z"
+    },
+    "Language Handling": {
+      "status": "FAIL",
+      "details": {
+        "error": "HTTP 401"
+      },
+      "timestamp": "2025-06-09T15:03:55.234Z"
+    },
+    "Redis Integration": {
+      "status": "PASS",
+      "details": {
+        "responseStatus": 400,
+        "testDataSent": true,
+        "responseSnippet": "{\"error\":\"Missing tourId, language, candidate, attendeeId, or sender\"}"
+      },
+      "timestamp": "2025-06-09T15:03:55.705Z"
+    }
+  },
+  "summary": {
+    "total": 9,
+    "passed": 7,
+    "failed": 2
+  }
+}

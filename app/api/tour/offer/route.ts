@@ -308,7 +308,8 @@ export async function GET(request: Request) {
     if (!offerJson) {
       return NextResponse.json({
         error: "Offer not found",
-        message: "The guide may not have started broadcasting yet"
+        message: "The guide may not have started broadcasting yet",
+        streamReady: false
       }, { status: 404 });
     }
 
@@ -324,6 +325,7 @@ export async function GET(request: Request) {
         return NextResponse.json({
           tourId,
           placeholder: true,
+          streamReady: false,  // Guide's stream is not ready yet
           message: "Guide has not started broadcasting yet"
         });
       }
@@ -336,6 +338,7 @@ export async function GET(request: Request) {
           error: `Invalid SDP offer: ${validation.error}`,
           tourId,
           placeholder: true,
+          streamReady: false,
           message: "Guide's broadcast is not properly configured"
         }, { status: 400 });
       }
@@ -345,7 +348,8 @@ export async function GET(request: Request) {
         error: "Invalid offer format",
         message: error instanceof Error ? error.message : String(error),
         tourId,
-        placeholder: true
+        placeholder: true,
+        streamReady: false
       }, { status: 400 });
     }
 
@@ -376,7 +380,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       tourId,
       offer,
-      placeholder: false
+      placeholder: false,
+      streamReady: true  // Indicate that the guide's stream is ready
     });
   } catch (error) {
     console.error("Error retrieving offer:", error);

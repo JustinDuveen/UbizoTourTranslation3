@@ -24,10 +24,10 @@ function GuideWebRTCManager({ tourId, language, setTranslation }: GuideWebRTCMan
   const fetchAttendees = useCallback(async () => {
     try {
       const redis = await getRedisClient();
-      
+
       // Get all attendee IDs
       const attendeeIds = await redis.sMembers(`tour:${tourId}:attendees`);
-      
+
       // Fetch details for each attendee
       const attendeeDetails = await Promise.all(
         attendeeIds.map(async (id: string) => {
@@ -54,7 +54,7 @@ function GuideWebRTCManager({ tourId, language, setTranslation }: GuideWebRTCMan
     try {
       const redis = await getRedisClient();
       const attendee = attendees.find(a => a.id === attendeeId);
-      
+
       if (attendee) {
         // Remove from all relevant Redis sets
         await Promise.all([
@@ -84,19 +84,19 @@ function GuideWebRTCManager({ tourId, language, setTranslation }: GuideWebRTCMan
 
     const setupEventSource = () => {
       eventSource = new EventSource(`/api/tour/events?tourId=${tourId}`);
-      
+
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        
+
         switch (data.type) {
           case 'attendee_joined':
             setAttendees(prev => [...prev, data.attendee]);
             break;
-            
+
           case 'attendee_left':
             setAttendees(prev => prev.filter(a => a.id !== data.attendeeId));
             break;
-            
+
           case 'language_added':
           case 'language_removed':
             // Refresh attendee list to get updated language information
@@ -127,7 +127,13 @@ function GuideWebRTCManager({ tourId, language, setTranslation }: GuideWebRTCMan
       fetchAttendees();
     };
 
-    initGuideWebRTC(setTranslation, language, handleAttendeeUpdate, tourId);
+    // CRITICAL FIX: Use guide WebRTC function, not attendee function
+    initGuideWebRTC(
+      setTranslation,
+      language,
+      handleAttendeeUpdate,
+      tourId
+    );
     fetchAttendees();
     setupEventSource();
 
@@ -146,7 +152,7 @@ function GuideWebRTCManager({ tourId, language, setTranslation }: GuideWebRTCMan
 
   return (
     <div className="space-y-6">
-      <AttendeeList 
+      <AttendeeList
         attendees={attendees}
         onKickAttendee={handleKickAttendee}
       />

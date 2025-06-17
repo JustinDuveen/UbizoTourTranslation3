@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendee Flow Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; max-height: 300px; overflow-y: auto; }
+        input { padding: 8px; margin: 5px; width: 200px; }
+        .log { max-height: 400px; overflow-y: auto; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Attendee WebRTC Flow Test</h1>
+
+    <div class="test-section">
+        <h2>1. Authentication</h2>
+        <div>
+            <label>Email: <input type="email" id="email" value="test@attendee.com" placeholder="Attendee Email"></label>
+            <label>Password: <input type="password" id="password" value="password123" placeholder="Password"></label>
+            <button onclick="testLogin()">Login as Attendee</button>
+            <button onclick="testRegister()">Register as Attendee</button>
+            <button onclick="checkAuth()">Check Auth Status</button>
+        </div>
+        <div id="auth-status"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Test Parameters</h2>
+        <div>
+            <label>Tour Code: <input type="text" id="tour-code" value="WS2QV6" placeholder="Tour Code"></label>
+            <label>Language: <input type="text" id="language" value="french" placeholder="Language"></label>
+            <label>Attendee Name: <input type="text" id="attendee-name" value="TestAttendee" placeholder="Attendee Name"></label>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Step-by-Step Flow Test</h2>
+        <button onclick="testStep1()">Step 1: Fetch Offer</button>
+        <button onclick="testStep2()">Step 2: Join Tour</button>
+        <button onclick="testStep3()">Step 3: Send Answer</button>
+        <button onclick="testFullFlow()">🚀 Test Full Flow</button>
+        <div id="flow-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Redis Verification</h2>
+        <button onclick="checkRedisState()">Check Redis State</button>
+        <div id="redis-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>5. Console Logs</h2>
+        <button onclick="clearLogs()">Clear Logs</button>
+        <div id="console-logs" class="log"></div>
+    </div>
+
+    <script>
+        let globalTourId = null;
+        let globalOffer = null;
+
+        // Capture console logs
+        const originalLog = console.log;
+        const originalError = console.error;
+        const logContainer = document.getElementById('console-logs');
+
+        function addLog(type, message) {
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: ${type === 'error' ? 'red' : 'blue'}">[${new Date().toLocaleTimeString()}] ${type.toUpperCase()}:</span> ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            addLog('log', args.join(' '));
+        };
+
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            addLog('error', args.join(' '));
+        };
+
+        function clearLogs() {
+            logContainer.innerHTML = '';
+        }
+
+        async function testLogin() {
+            console.log('🔐 Testing attendee login...');
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const statusDiv = document.getElementById('auth-status');
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                console.log('Login response:', data);
+
+                if (response.ok) {
+                    statusDiv.innerHTML = `
+                        <div class="success">
+                            <h3>✅ Login Successful</h3>
+                            <p>Role: ${data.user.role}</p>
+                            <p>Email: ${data.user.email}</p>
+                        </div>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `
+                        <div class="error">
+                            <h3>❌ Login Failed</h3>
+                            <p>Error: ${data.error}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                statusDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Login Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testRegister() {
+            console.log('📝 Testing attendee registration...');
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const statusDiv = document.getElementById('auth-status');
+
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, role: 'attendee' }),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                console.log('Registration response:', data);
+
+                if (response.ok) {
+                    statusDiv.innerHTML = `
+                        <div class="success">
+                            <h3>✅ Registration Successful</h3>
+                            <p>Role: ${data.user.role}</p>
+                            <p>Email: ${data.user.email}</p>
+                        </div>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `
+                        <div class="error">
+                            <h3>❌ Registration Failed</h3>
+                            <p>Error: ${data.error}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                statusDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Registration Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function checkAuth() {
+            console.log('🔍 Checking authentication status...');
+            const statusDiv = document.getElementById('auth-status');
+
+            try {
+                const response = await fetch('/api/auth/check', {
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                console.log('Auth check response:', data);
+
+                if (response.ok && data.user) {
+                    statusDiv.innerHTML = `
+                        <div class="success">
+                            <h3>✅ Authenticated</h3>
+                            <p>Role: ${data.user.role}</p>
+                            <p>Email: ${data.user.email}</p>
+                        </div>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `
+                        <div class="warning">
+                            <h3>⚠️ Not Authenticated</h3>
+                            <p>Please login first</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Auth check error:', error);
+                statusDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Auth Check Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function getTestParams() {
+            return {
+                tourCode: document.getElementById('tour-code').value,
+                language: document.getElementById('language').value,
+                attendeeName: document.getElementById('attendee-name').value
+            };
+        }
+
+        async function testStep1() {
+            console.log('🔍 STEP 1: Testing offer fetch...');
+            const params = getTestParams();
+
+            try {
+                const response = await fetch(`/api/tour/offer?tourCode=${params.tourCode}&language=${params.language}&attendeeName=${encodeURIComponent(params.attendeeName)}`, {
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                console.log('✅ Offer fetch response:', JSON.stringify(data, null, 2));
+
+                if (data.offer && data.tourId) {
+                    globalTourId = data.tourId;
+                    globalOffer = data.offer;
+                    console.log(`✅ Got offer for tourId: ${globalTourId}`);
+                    return { success: true, data };
+                } else {
+                    console.error('❌ No offer or tourId in response');
+                    return { success: false, error: 'No offer or tourId' };
+                }
+            } catch (error) {
+                console.error('❌ Step 1 failed:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function testStep2() {
+            console.log('🔍 STEP 2: Testing tour join...');
+            const params = getTestParams();
+
+            try {
+                const response = await fetch(`/api/tour/join?tourCode=${params.tourCode}&language=${params.language}`, {
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                console.log('✅ Join response:', JSON.stringify(data, null, 2));
+
+                if (data.tourId) {
+                    globalTourId = data.tourId;
+                    console.log(`✅ Joined tour with tourId: ${globalTourId}`);
+                    return { success: true, data };
+                } else {
+                    console.error('❌ No tourId in join response');
+                    return { success: false, error: 'No tourId in response' };
+                }
+            } catch (error) {
+                console.error('❌ Step 2 failed:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function testStep3() {
+            console.log('🔍 STEP 3: Testing answer send...');
+            const params = getTestParams();
+
+            if (!globalTourId) {
+                console.error('❌ No tourId available. Run Step 1 or 2 first.');
+                return { success: false, error: 'No tourId available' };
+            }
+
+            // Create a mock answer
+            const mockAnswer = {
+                type: 'answer',
+                sdp: 'v=0\r\no=- 123456789 123456789 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 127.0.0.1\r\na=rtcp:9 IN IP4 127.0.0.1\r\na=ice-ufrag:test\r\na=ice-pwd:test\r\na=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\na=setup:active\r\na=mid:0\r\na=recvonly\r\na=rtcp-mux\r\na=rtpmap:111 opus/48000/2\r\n'
+            };
+
+            try {
+                const response = await fetch(`/api/tour/answer?tourId=${encodeURIComponent(globalTourId)}&language=${encodeURIComponent(params.language)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer: mockAnswer }),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                console.log('✅ Answer send response:', JSON.stringify(data, null, 2));
+
+                if (response.ok) {
+                    console.log(`✅ Answer sent successfully for tourId: ${globalTourId}`);
+                    return { success: true, data };
+                } else {
+                    console.error(`❌ Answer send failed: ${response.status} ${response.statusText}`);
+                    return { success: false, error: `${response.status} ${response.statusText}` };
+                }
+            } catch (error) {
+                console.error('❌ Step 3 failed:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function testFullFlow() {
+            console.log('🚀 TESTING FULL ATTENDEE FLOW...');
+            const resultDiv = document.getElementById('flow-result');
+            resultDiv.innerHTML = '<p>Running full flow test...</p>';
+
+            const results = [];
+
+            // Step 1: Fetch Offer
+            const step1 = await testStep1();
+            results.push({ step: 'Fetch Offer', ...step1 });
+
+            // Step 2: Join Tour
+            const step2 = await testStep2();
+            results.push({ step: 'Join Tour', ...step2 });
+
+            // Step 3: Send Answer (only if we have tourId)
+            if (globalTourId) {
+                const step3 = await testStep3();
+                results.push({ step: 'Send Answer', ...step3 });
+            } else {
+                results.push({ step: 'Send Answer', success: false, error: 'No tourId from previous steps' });
+            }
+
+            // Display results
+            const html = results.map(result => `
+                <div class="${result.success ? 'success' : 'error'}" style="margin: 10px 0; padding: 10px;">
+                    <h4>${result.success ? '✅' : '❌'} ${result.step}</h4>
+                    ${result.success ?
+                        `<pre>${JSON.stringify(result.data, null, 2)}</pre>` :
+                        `<p>Error: ${result.error}</p>`
+                    }
+                </div>
+            `).join('');
+
+            resultDiv.innerHTML = html;
+
+            // Summary
+            const successCount = results.filter(r => r.success).length;
+            console.log(`🏁 FLOW TEST COMPLETE: ${successCount}/${results.length} steps successful`);
+
+            if (successCount === results.length) {
+                console.log('🎉 ALL STEPS PASSED! Attendee flow is working correctly.');
+            } else {
+                console.log('❌ Some steps failed. Check the results above.');
+            }
+        }
+
+        async function checkRedisState() {
+            console.log('🔍 Checking Redis state...');
+            const resultDiv = document.getElementById('redis-result');
+            const params = getTestParams();
+
+            if (!globalTourId) {
+                resultDiv.innerHTML = '<div class="warning"><p>No tourId available. Run the flow test first.</p></div>';
+                return;
+            }
+
+            try {
+                // Check if answers were stored
+                const answerResponse = await fetch(`/api/tour/answer?tourId=${globalTourId}&language=${params.language}`, {
+                    credentials: 'include'
+                });
+
+                const answerData = await answerResponse.json();
+                console.log('Redis answer check:', answerData);
+
+                resultDiv.innerHTML = `
+                    <div class="${answerData.answers && answerData.answers.length > 0 ? 'success' : 'warning'}">
+                        <h3>Redis Answer Queue Check</h3>
+                        <p><strong>Tour ID:</strong> ${globalTourId}</p>
+                        <p><strong>Language:</strong> ${params.language}</p>
+                        <p><strong>Answers in Redis:</strong> ${answerData.answers ? answerData.answers.length : 0}</p>
+                        <pre>${JSON.stringify(answerData, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('❌ Redis check failed:', error);
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>Redis Check Failed</h3>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Auto-run on page load
+        window.onload = function() {
+            console.log('🔍 Attendee Flow Test Page Loaded');
+            console.log('Use the buttons above to test each step of the attendee flow');
+        };
+    </script>
+</body>
+</html>

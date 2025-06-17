@@ -77,8 +77,8 @@ When handling languages in API routes:
 
 1. Import the necessary utilities:
    ```typescript
-   import { 
-     normalizeLanguageForStorage, 
+   import {
+     normalizeLanguageForStorage,
      formatLanguageForDisplay,
      getOfferKey,
      // other utilities as needed
@@ -112,9 +112,9 @@ When handling languages in UI components:
 
 1. Import the necessary utilities:
    ```typescript
-   import { 
-     normalizeLanguageForStorage, 
-     formatLanguageForDisplay 
+   import {
+     normalizeLanguageForStorage,
+     formatLanguageForDisplay
    } from "@/lib/languageUtils";
    ```
 
@@ -144,6 +144,8 @@ The following Redis key patterns are used in the application:
 | Primary Language | `tour:{tourId}:primary_language` | `getPrimaryLanguageKey()` |
 | Language Attendees | `tour:{tourId}:language:{language}:attendees` | `getLanguageAttendeesKey()` |
 | Attendee Details | `tour:{tourId}:attendee:{attendeeId}` | `getAttendeeKey()` |
+| Attendee Answers | `tour:{tourId}:{language}:answers` | `getAnswersKey()` |
+| ICE Candidates | `ice:{sender}:{tourId}:{attendeeId}:{language}` | `getIceCandidateKey()` |
 
 ## Backward Compatibility
 
@@ -157,11 +159,11 @@ let offerJson = await redis.get(primaryOfferKey);
 // If not found, try alternative keys for backward compatibility
 if (!offerJson) {
   const alternativeKeys = getAlternativeOfferKeys(tourId, language);
-  
+
   // Try each alternative key
   for (const altKey of alternativeKeys) {
     if (altKey === primaryOfferKey) continue; // Skip the primary key we already tried
-    
+
     offerJson = await redis.get(altKey);
     if (offerJson) {
       console.log(`Found offer using alternative key: ${altKey}`);

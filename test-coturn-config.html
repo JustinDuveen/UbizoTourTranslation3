@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+    <meta http-equiv="Content-Security-Policy" content="connect-src *">
+    
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coturn Configuration Test</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #569cd6;
+            text-align: center;
+        }
+        .test-section {
+            background-color: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .log {
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        button {
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #1177bb;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.success { background-color: #4caf50; color: white; }
+        .status.failure { background-color: #f44336; color: white; }
+        .status.pending { background-color: #ff9800; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Coturn STUN/TURN Server Configuration Test</h1>
+        
+        <div class="test-section">
+            <button id="runTest" onclick="runCoturnTest()">Run Coturn Test</button>
+            <span id="testStatus" class="status pending">Ready to Test</span>
+        </div>
+        
+        <div class="test-section">
+            <h3>Test Results Log</h3>
+            <div id="logOutput" class="log">Click "Run Coturn Test" to start testing your STUN/TURN server configuration...</div>
+        </div>
+    </div>
+
+    <script>
+        function log(message) {
+            const logOutput = document.getElementById('logOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            logOutput.textContent += `[${timestamp}] ${message}\n`;
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('logOutput').textContent = '';
+        }
+
+        function setStatus(text, type) {
+            const status = document.getElementById('testStatus');
+            status.textContent = text;
+            status.className = `status ${type}`;
+        }
+
+        async function runCoturnTest() {
+            const button = document.getElementById('runTest');
+            button.disabled = true;
+            clearLog();
+            setStatus('Testing...', 'pending');
+            
+            try {
+                const results = await testCoturnConfig();
+                
+                // Determine overall status
+                const anyWorking = results.stun.working || results.turn.working || results.turnAlt.working;
+                if (anyWorking) {
+                    setStatus('Local Server Working', 'success');
+                } else if (results.public.working) {
+                    setStatus('Local Server Failed (Network OK)', 'failure');
+                } else {
+                    setStatus('Network Issues Detected', 'failure');
+                }
+            } catch (error) {
+                log(`❌ Test failed with error: ${error.message}`);
+                setStatus('Test Error', 'failure');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // Test coturn with the exact configuration from turnserver.conf
+        async function testCoturnConfig() {
+            log('=== Testing Coturn with Actual Configuration ===');
+            
+            // Test STUN
+            log('\n--- Testing STUN (192.168.101.232:3478) ---');
+            const stunPC = new RTCPeerConnection({
+                iceServers: [{ urls: "stun:192.168.101.232:3478" }]
+            });
+            
+            let stunResult = await new Promise((resolve) => {
+                let candidateCount = 0;
+                let stunWorking = false;
+                let candidates = [];
+                
+                const timeout = setTimeout(() => {
+                    log(`❌ STUN timeout after 10 seconds (${candidateCount} candidates)`);
+                    resolve({ working: stunWorking, candidates: candidateCount, details: candidates });
+                }, 10000);
+                
+                stunPC.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        candidateCount++;
+                        const candidate = event.candidate.candidate;
+                        candidates.push(candidate);
+                        log(`STUN candidate ${candidateCount}: ${candidate}`);
+                        
+                        if (candidate.includes('typ srflx')) {
+                            log('✅ STUN working - server reflexive candidate found');
+                            stunWorking = true;
+                        }
+                    } else {
+                        clearTimeout(timeout);
+                        log(`STUN gathering complete - ${candidateCount} total candidates`);
+                        resolve({ working: stunWorking, candidates: candidateCount, details: candidates });
+                    }
+                };
+                
+                stunPC.onicegatheringstatechange = () => {
+                    log(`STUN ICE gathering state: ${stunPC.iceGatheringState}`);
+                };
+                
+                stunPC.createDataChannel('test');
+                stunPC.createOffer().then(offer => stunPC.setLocalDescription(offer));
+            });
+            
+            stunPC.close();
+            
+            // Test TURN with correct credentials
+            log('\n--- Testing TURN (username1:password1) ---');
+            const turnPC = new RTCPeerConnection({
+                iceServers: [{
+                    urls: "turn:192.168.101.232:3478",
+                    username: "username1",
+                    credential: "password1"
+                }]
+            });
+            
+            let turnResult = await new Promise((resolve) => {
+                let candidateCount = 0;
+                let turnWorking = false;
+                let candidates = [];
+                
+                const timeout = setTimeout(() => {
+                    log(`❌ TURN timeout after 10 seconds (${candidateCount} candidates)`);
+                    resolve({ working: turnWorking, candidates: candidateCount, details: candidates });
+                }, 10000);
+                
+                turnPC.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        candidateCount++;
+                        const candidate = event.candidate.candidate;
+                        candidates.push(candidate);
+                        log(`TURN candidate ${candidateCount}: ${candidate}`);
+                        
+                        if (candidate.includes('typ relay')) {
+                            log('✅ TURN working - relay candidate found');
+                            turnWorking = true;
+                        }
+                    } else {
+                        clearTimeout(timeout);
+                        log(`TURN gathering complete - ${candidateCount} total candidates`);
+                        resolve({ working: turnWorking, candidates: candidateCount, details: candidates });
+                    }
+                };
+                
+                turnPC.onicegatheringstatechange = () => {
+                    log(`TURN ICE gathering state: ${turnPC.iceGatheringState}`);
+                };
+                
+                turnPC.createDataChannel('test');
+                turnPC.createOffer().then(offer => turnPC.setLocalDescription(offer));
+            });
+            
+            turnPC.close();
+            
+            // Test TURN on alternate port (443)
+            log('\n--- Testing TURN on alternate port (443) ---');
+            const turnAltPC = new RTCPeerConnection({
+                iceServers: [{
+                    urls: "turn:192.168.101.232:443",
+                    username: "username1",
+                    credential: "password1"
+                }]
+            });
+            
+            let turnAltResult = await new Promise((resolve) => {
+                let candidateCount = 0;
+                let turnWorking = false;
+                
+                const timeout = setTimeout(() => {
+                    log(`❌ TURN 443 timeout after 10 seconds (${candidateCount} candidates)`);
+                    resolve({ working: turnWorking, candidates: candidateCount });
+                }, 10000);
+                
+                turnAltPC.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        candidateCount++;
+                        log(`TURN 443 candidate ${candidateCount}: ${event.candidate.candidate}`);
+                        
+                        if (event.candidate.candidate.includes('typ relay')) {
+                            log('✅ TURN 443 working - relay candidate found');
+                            turnWorking = true;
+                        }
+                    } else {
+                        clearTimeout(timeout);
+                        resolve({ working: turnWorking, candidates: candidateCount });
+                    }
+                };
+                
+                turnAltPC.createDataChannel('test');
+                turnAltPC.createOffer().then(offer => turnAltPC.setLocalDescription(offer));
+            });
+            
+            turnAltPC.close();
+            
+            // Test public server for comparison
+            log('\n--- Testing Public STUN (Reference) ---');
+            const pubPC = new RTCPeerConnection({
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+            });
+            
+            let pubResult = await new Promise((resolve) => {
+                let candidateCount = 0;
+                let pubWorking = false;
+                
+                const timeout = setTimeout(() => {
+                    resolve({ working: pubWorking, candidates: candidateCount });
+                }, 5000);
+                
+                pubPC.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        candidateCount++;
+                        if (event.candidate.candidate.includes('typ srflx')) {
+                            log('✅ Public STUN working - network connectivity OK');
+                            pubWorking = true;
+                        }
+                    } else {
+                        clearTimeout(timeout);
+                        resolve({ working: pubWorking, candidates: candidateCount });
+                    }
+                };
+                
+                pubPC.createDataChannel('test');
+                pubPC.createOffer().then(offer => pubPC.setLocalDescription(offer));
+            });
+            
+            pubPC.close();
+            
+            // Final Summary
+            log('\n=== FINAL RESULTS ===');
+            log(`Local STUN (3478): ${stunResult.working ? '✅ Working' : '❌ Failed'} (${stunResult.candidates} candidates)`);
+            log(`Local TURN (3478): ${turnResult.working ? '✅ Working' : '❌ Failed'} (${turnResult.candidates} candidates)`);
+            log(`Local TURN (443):  ${turnAltResult.working ? '✅ Working' : '❌ Failed'} (${turnAltResult.candidates} candidates)`);
+            log(`Public STUN:       ${pubResult.working ? '✅ Working' : '❌ Failed'} (${pubResult.candidates} candidates)`);
+            
+            if (pubResult.working) {
+                log('\n✅ Network connectivity is OK');
+                if (stunResult.working || turnResult.working) {
+                    log('✅ Local coturn server is working');
+                } else {
+                    log('⚠️ Local coturn server not accessible from browser');
+                    log('   This could be due to:');
+                    log('   - WSL networking limitations');
+                    log('   - Firewall blocking local connections');
+                    log('   - Browser security restrictions');
+                }
+            } else {
+                log('❌ Network connectivity issue');
+            }
+            
+            return { stun: stunResult, turn: turnResult, turnAlt: turnAltResult, public: pubResult };
+        }
+    </script>
+</body>
+</html>

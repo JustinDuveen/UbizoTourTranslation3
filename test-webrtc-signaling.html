@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Signaling Debug Test</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #569cd6;
+            text-align: center;
+        }
+        .test-section {
+            background-color: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .log {
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        button {
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #1177bb;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.success { background-color: #4caf50; color: white; }
+        .status.failure { background-color: #f44336; color: white; }
+        .status.pending { background-color: #ff9800; color: white; }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #cccccc;
+        }
+        .input-group input {
+            width: 200px;
+            padding: 5px;
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebRTC Signaling Debug Test</h1>
+        
+        <div class="test-section">
+            <h3>Test Configuration</h3>
+            <div class="input-group">
+                <label for="tourCode">Tour Code:</label>
+                <input type="text" id="tourCode" value="M49MTP" placeholder="Enter tour code">
+            </div>
+            <div class="input-group">
+                <label for="language">Language:</label>
+                <input type="text" id="language" value="French" placeholder="Enter language">
+            </div>
+            <div class="input-group">
+                <label for="attendeeName">Attendee Name:</label>
+                <input type="text" id="attendeeName" value="TestAttendee" placeholder="Enter attendee name">
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <button id="testOffer" onclick="testOfferFetch()">Test Offer Fetch</button>
+            <button id="testSignaling" onclick="testSignalingFlow()">Test Full Signaling</button>
+            <button id="clearLog" onclick="clearLog()">Clear Log</button>
+            <span id="testStatus" class="status pending">Ready to Test</span>
+        </div>
+        
+        <div class="test-section">
+            <h3>Debug Log</h3>
+            <div id="logOutput" class="log">Click a test button to start debugging...</div>
+        </div>
+    </div>
+
+    <script>
+        function log(message) {
+            const logOutput = document.getElementById('logOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            logOutput.textContent += `[${timestamp}] ${message}\n`;
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('logOutput').textContent = '';
+        }
+
+        function setStatus(text, type) {
+            const status = document.getElementById('testStatus');
+            status.textContent = text;
+            status.className = `status ${type}`;
+        }
+
+        async function testOfferFetch() {
+            const tourCode = document.getElementById('tourCode').value;
+            const language = document.getElementById('language').value;
+            const attendeeName = document.getElementById('attendeeName').value;
+            
+            if (!tourCode || !language || !attendeeName) {
+                log('❌ Please fill in all fields');
+                setStatus('Missing Fields', 'failure');
+                return;
+            }
+            
+            setStatus('Testing Offer Fetch...', 'pending');
+            log('=== Testing Offer Fetch ===');
+            log(`Tour Code: ${tourCode}`);
+            log(`Language: ${language}`);
+            log(`Attendee Name: ${attendeeName}`);
+            
+            try {
+                // Step 1: Fetch the offer
+                log('\n--- Step 1: Fetching Tour Offer ---');
+                const offerUrl = `/api/tour/offer?tourCode=${encodeURIComponent(tourCode)}&language=${encodeURIComponent(language)}&attendeeName=${encodeURIComponent(attendeeName)}`;
+                log(`Fetching: ${offerUrl}`);
+                
+                const offerResponse = await fetch(offerUrl, {
+                    credentials: 'include'
+                });
+                
+                log(`Response status: ${offerResponse.status} ${offerResponse.statusText}`);
+                
+                if (!offerResponse.ok) {
+                    const errorData = await offerResponse.json();
+                    log(`❌ Offer fetch failed: ${JSON.stringify(errorData, null, 2)}`);
+                    setStatus('Offer Fetch Failed', 'failure');
+                    return;
+                }
+                
+                const offerData = await offerResponse.json();
+                log(`✅ Offer fetched successfully`);
+                log(`Offer data keys: ${Object.keys(offerData).join(', ')}`);
+                
+                if (offerData.placeholder) {
+                    log(`⚠️ Received placeholder offer - guide may not be broadcasting`);
+                    setStatus('Placeholder Offer', 'failure');
+                    return;
+                }
+                
+                // Step 2: Analyze the SDP offer
+                log('\n--- Step 2: Analyzing SDP Offer ---');
+                if (offerData.offer && offerData.offer.sdp) {
+                    const sdp = offerData.offer.sdp;
+                    log(`SDP type: ${offerData.offer.type}`);
+                    log(`SDP preview: ${sdp.substring(0, 100)}...`);
+                    
+                    // Check for audio section
+                    const audioSection = sdp.match(/m=audio.*(?:\r\n|\r|\n)(?:.*(?:\r\n|\r|\n))*/g);
+                    if (audioSection) {
+                        log(`✅ Audio section found in SDP`);
+                        
+                        // Check directionality
+                        const directionality = audioSection[0].match(/a=(sendrecv|recvonly|sendonly|inactive)/g);
+                        if (directionality) {
+                            log(`Audio directionality: ${directionality[0]}`);
+                            if (directionality[0] === 'a=sendonly') {
+                                log(`✅ Correct directionality for guide offer`);
+                            } else {
+                                log(`⚠️ Unexpected directionality: ${directionality[0]}`);
+                            }
+                        } else {
+                            log(`⚠️ No explicit audio directionality found`);
+                        }
+                        
+                        // Check for codecs
+                        const codecs = audioSection[0].match(/a=rtpmap:(\d+) ([\w\-/]+)/g);
+                        if (codecs) {
+                            log(`Audio codecs: ${codecs.length} found`);
+                            codecs.forEach(codec => log(`  - ${codec}`));
+                        }
+                    } else {
+                        log(`❌ No audio section found in SDP`);
+                    }
+                    
+                    setStatus('Offer Analysis Complete', 'success');
+                } else {
+                    log(`❌ No SDP found in offer`);
+                    setStatus('Invalid Offer', 'failure');
+                }
+                
+            } catch (error) {
+                log(`❌ Error during offer fetch: ${error.message}`);
+                setStatus('Test Error', 'failure');
+            }
+        }
+
+        async function testSignalingFlow() {
+            const tourCode = document.getElementById('tourCode').value;
+            const language = document.getElementById('language').value;
+            const attendeeName = document.getElementById('attendeeName').value;
+            
+            if (!tourCode || !language || !attendeeName) {
+                log('❌ Please fill in all fields');
+                setStatus('Missing Fields', 'failure');
+                return;
+            }
+            
+            setStatus('Testing Signaling Flow...', 'pending');
+            log('=== Testing Full WebRTC Signaling Flow ===');
+            
+            try {
+                // Step 1: Create peer connection with Xirsys servers
+                log('\n--- Step 1: Creating Peer Connection ---');
+                
+                // Fetch Xirsys configuration
+                const xirsysResponse = await fetch('/api/xirsys-ice', {
+                    credentials: 'include'
+                });
+                
+                if (!xirsysResponse.ok) {
+                    log(`❌ Failed to fetch Xirsys config: ${xirsysResponse.status}`);
+                    setStatus('Xirsys Config Failed', 'failure');
+                    return;
+                }
+                
+                const xirsysData = await xirsysResponse.json();
+                log(`✅ Xirsys config fetched: ${xirsysData.iceServers?.length || 0} servers`);
+                
+                const pc = new RTCPeerConnection({
+                    iceServers: xirsysData.iceServers || []
+                });
+                
+                log(`✅ Peer connection created`);
+                
+                // Set up event handlers
+                pc.oniceconnectionstatechange = () => {
+                    log(`ICE connection state: ${pc.iceConnectionState}`);
+                };
+                
+                pc.onsignalingstatechange = () => {
+                    log(`Signaling state: ${pc.signalingState}`);
+                };
+                
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        log(`ICE candidate generated: ${event.candidate.candidate.substring(0, 50)}...`);
+                    } else {
+                        log(`ICE gathering completed`);
+                    }
+                };
+                
+                // Step 2: Fetch and set remote description
+                log('\n--- Step 2: Fetching and Setting Remote Description ---');
+                const joinResponse = await fetch(`/api/tour/join?tourCode=${encodeURIComponent(tourCode)}&language=${encodeURIComponent(language)}`, {
+                    credentials: 'include'
+                });
+                
+                if (!joinResponse.ok) {
+                    const errorData = await joinResponse.json();
+                    log(`❌ Join failed: ${JSON.stringify(errorData, null, 2)}`);
+                    setStatus('Join Failed', 'failure');
+                    return;
+                }
+                
+                const joinData = await joinResponse.json();
+                log(`✅ Join response received`);
+                
+                if (joinData.placeholder) {
+                    log(`⚠️ Received placeholder - guide not broadcasting`);
+                    setStatus('Guide Not Broadcasting', 'failure');
+                    return;
+                }
+                
+                log(`Setting remote description...`);
+                await pc.setRemoteDescription(joinData.offer);
+                log(`✅ Remote description set - signaling state: ${pc.signalingState}`);
+                
+                // Step 3: Create and set local description
+                log('\n--- Step 3: Creating Answer ---');
+                const answer = await pc.createAnswer({
+                    offerToReceiveAudio: true,
+                    voiceActivityDetection: false
+                });
+                
+                // Fix answer directionality
+                if (answer.sdp) {
+                    answer.sdp = answer.sdp.replace(/a=(sendrecv|sendonly|recvonly|inactive)\r?\n/g, '');
+                    answer.sdp = answer.sdp.replace(/(m=audio[^\r\n]*\r?\n)/, '$1a=recvonly\r\n');
+                    log(`✅ Fixed answer directionality to recvonly`);
+                }
+                
+                await pc.setLocalDescription(answer);
+                log(`✅ Local description set - signaling state: ${pc.signalingState}`);
+                
+                // Step 4: Send answer to server
+                log('\n--- Step 4: Sending Answer to Server ---');
+                const answerResponse = await fetch(`/api/tour/answer?tourId=${encodeURIComponent(joinData.tourId)}&language=${encodeURIComponent(language)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        answer: pc.localDescription,
+                        attendeeId: `test_${Date.now()}`
+                    }),
+                    credentials: 'include'
+                });
+                
+                if (!answerResponse.ok) {
+                    const errorText = await answerResponse.text();
+                    log(`❌ Answer send failed: ${answerResponse.status} ${errorText}`);
+                    setStatus('Answer Send Failed', 'failure');
+                    return;
+                }
+                
+                log(`✅ Answer sent successfully`);
+                
+                // Step 5: Monitor connection
+                log('\n--- Step 5: Monitoring Connection ---');
+                let connectionTimeout = setTimeout(() => {
+                    if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+                        log(`⚠️ Connection timeout - final state: ${pc.iceConnectionState}`);
+                        setStatus('Connection Timeout', 'failure');
+                    }
+                    pc.close();
+                }, 30000);
+                
+                pc.oniceconnectionstatechange = () => {
+                    log(`ICE connection state changed: ${pc.iceConnectionState}`);
+                    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                        log(`✅ WebRTC connection established!`);
+                        setStatus('Connection Successful', 'success');
+                        clearTimeout(connectionTimeout);
+                    } else if (pc.iceConnectionState === 'failed') {
+                        log(`❌ WebRTC connection failed`);
+                        setStatus('Connection Failed', 'failure');
+                        clearTimeout(connectionTimeout);
+                    }
+                };
+                
+                log(`Waiting for connection establishment...`);
+                
+            } catch (error) {
+                log(`❌ Error during signaling flow: ${error.message}`);
+                setStatus('Signaling Error', 'failure');
+            }
+        }
+    </script>
+</body>
+</html>

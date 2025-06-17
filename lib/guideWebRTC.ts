@@ -1,9 +1,6 @@
-//Translation Monitor import to check audio:
-import { initializeMonitor, enhanceOnTrackHandler, cleanupMonitor } from './translationMonitorIntegration';
-//
-
-
 import { executeReplaceOfferTransaction } from "@/lib/languageUtils";
+import { getSignalingClient, initializeSignaling } from "@/lib/webrtcSignaling";
+import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/iceConnectionMonitor";
 
 // Audio monitoring and connection handling classes
 class AudioMonitor {
@@ -11,6 +8,7 @@ class AudioMonitor {
   private analyser: AnalyserNode;
   private dataArray: Uint8Array;
   private monitorInterval: NodeJS.Timeout | null = null;
+  private instructionRefreshInterval: NodeJS.Timeout | null = null;
 
   constructor(stream: MediaStream) {
     this.audioContext = new AudioContext();
@@ -21,8 +19,10 @@ class AudioMonitor {
     this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
   }
 
-  startMonitoring(onSilence: () => void, onActive: () => void) {
+  startMonitoring(onSilence: () => void, onActive: () => void, onSpeechResumed?: () => void) {
     let silenceCounter = 0;
+    let wasInSilence = false;
+
     this.monitorInterval = setInterval(() => {
       this.analyser.getByteFrequencyData(this.dataArray);
       const sum = this.dataArray.reduce((acc, val) => acc + val, 0);
@@ -31,19 +31,36 @@ class AudioMonitor {
       if (audioLevel < 0.01) {
         silenceCounter++;
         if (silenceCounter > 50) {
+          wasInSilence = true;
           onSilence();
         }
       } else {
+        // If we were in silence and now have audio, trigger speech resumed
+        if (wasInSilence && silenceCounter > 50 && onSpeechResumed) {
+          onSpeechResumed();
+        }
         silenceCounter = 0;
+        wasInSilence = false;
         onActive();
       }
     }, 100);
+  }
+
+  // Start periodic instruction refresh
+  startInstructionRefresh(onRefreshNeeded: () => void, intervalMs: number = 120000) {
+    this.instructionRefreshInterval = setInterval(() => {
+      onRefreshNeeded();
+    }, intervalMs);
   }
 
   stop() {
     if (this.monitorInterval) {
       clearInterval(this.monitorInterval);
       this.monitorInterval = null;
+    }
+    if (this.instructionRefreshInterval) {
+      clearInterval(this.instructionRefreshInterval);
+      this.instructionRefreshInterval = null;
     }
     this.audioContext.close();
   }
@@ -111,6 +128,7 @@ class StatsCollector {
 interface AttendeeConnection {
   pc: RTCPeerConnection;
   dc: RTCDataChannel;
+  iceMonitor?: any; // ICE connection monitor
 }
 
 // Track active connections and sent instructions by language
@@ -142,67 +160,93 @@ function getAudioContext(): AudioContext {
   return sharedAudioContext;
 }
 
-async function loadInstruction(language: string): Promise<AudioBuffer> {
-  try {
-    const response = await fetch(`/audio/english_to_${language.toLowerCase()}_Translation_Instruction.mp3`);
-    if (!response.ok) {
-      throw new Error(`Failed to load instruction audio for ${language}`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-    const audioContext = getAudioContext();
-    return await audioContext.decodeAudioData(arrayBuffer);
-  } catch (error) {
-    console.error(`Error loading instruction for ${language}:`, error);
-    throw error;
-  }
+// Audio instruction loading function removed
+
+// Audio tracks verification function removed
+
+// Audio segment sending function removed
+
+/**
+ * Gets translation instructions for a specific language
+ * @param language The target language for translation
+ * @returns The translation instructions optimized for OpenAI Realtime API
+ */
+function getTranslationInstructions(language: string): string {
+  return `You are an expert live Tour Translator. Your role is to provide real-time translation of spoken content.
+
+CRITICAL INSTRUCTIONS:
+- Translate ONLY into ${language}
+- Translate exactly what you hear - do not add, omit, or interpret
+- Maintain the speaker's tone and emotion
+- Use natural, colloquial ${language} that sounds native
+- Begin translation immediately when you detect speech
+- Continue translating until speech stops
+- Do NOT answer questions or provide commentary
+- Do NOT speak in any language other than ${language}
+- If you hear multiple languages, translate everything into ${language}
+
+RESPONSE FORMAT:
+- Provide only the translation
+- No prefixes like "Translation:" or explanations
+- Speak naturally as if you are the original speaker in ${language}
+
+Begin translation now.`;
 }
 
-function verifyAudioTracks(pc: RTCPeerConnection, langContext: string): boolean {
-  const audioTrack = pc.getSenders().find(sender => sender.track?.kind === 'audio')?.track;
-  const hasAudioTrack = !!audioTrack;
-
-  if (!hasAudioTrack) {
-    console.warn(`${langContext} No audio track found in peer connection`);
-  } else {
-    console.log(`${langContext} Audio track verified: id=${audioTrack.id}, enabled=${audioTrack.enabled}, muted=${audioTrack.muted}`);
-  }
-
-  return hasAudioTrack;
-}
-
-async function sendAudioSegment(audioBuffer: AudioBuffer, pc: RTCPeerConnection, langContext: string): Promise<void> {
+/**
+ * Sends system-level translation instructions to OpenAI using session.update
+ * @param dataChannel The WebRTC data channel to send instructions through
+ * @param language The target language for translation
+ * @param langContext The language context for logging
+ * @param forceResend Whether to force resending instructions even if previously sent
+ */
+function sendTranslationInstructions(
+  dataChannel: RTCDataChannel,
+  language: string,
+  langContext: string,
+  forceResend: boolean = false
+): void {
   try {
-    const audioData = audioBuffer.getChannelData(0);
-    const audioTrack = pc.getSenders().find(sender => sender.track?.kind === 'audio')?.track;
-
-    if (!audioTrack) {
-      throw new Error('No audio track found in peer connection');
+    // Skip if data channel is not open
+    if (dataChannel.readyState !== 'open') {
+      console.warn(`${langContext} Data channel not open, cannot send instructions`);
+      return;
     }
 
-    // Create a MediaStream from the audio data
-    const stream = new MediaStream([audioTrack]);
+    // Skip if instructions already sent and not forcing resend
+    if (sentInstructions.has(language) && !forceResend) {
+      console.log(`${langContext} Instructions already sent for ${language}, skipping`);
+      return;
+    }
 
-    // Get the AudioContext safely
-    const audioContext = getAudioContext();
+    // Get instructions for the language
+    const instructions = getTranslationInstructions(language);
 
-    // Use the shared AudioContext for all audio operations
-    const sourceNode = audioContext.createBufferSource();
-    sourceNode.buffer = audioBuffer;
+    // CORRECTED: Use session.update for system instructions (not response.create)
+    const sessionUpdateEvent = {
+      type: "session.update",
+      session: {
+        instructions: instructions,
+        // Ensure modalities are set correctly
+        modalities: ["audio", "text"],
+        // Maintain VAD settings
+        turn_detection: {
+          type: "server_vad",
+          silence_duration_ms: 300,
+          create_response: true
+        }
+      }
+    };
 
-    // Connect and start playback using the same AudioContext
-    const streamDest = audioContext.createMediaStreamDestination();
-    sourceNode.connect(streamDest);
-    sourceNode.start();
+    // Send the session update with instructions
+    console.log(`${langContext} ${forceResend ? 'Resending' : 'Sending'} system instructions for ${language} translation via session.update`);
+    dataChannel.send(JSON.stringify(sessionUpdateEvent));
+    console.log(`${langContext} System translation instructions sent successfully`);
 
-    console.log(`${langContext} Playing instruction audio, duration: ${audioBuffer.duration}s`);
-
-    // Wait for the instruction audio to finish
-    await new Promise(resolve => setTimeout(resolve, audioBuffer.duration * 1000));
-
-    console.log(`${langContext} Instruction audio playback completed`);
+    // Mark instructions as sent
+    sentInstructions.add(language);
   } catch (error) {
-    console.error(`${langContext} Error in sendAudioSegment:`, error);
-    throw error;
+    console.error(`${langContext} Error sending translation instructions:`, error);
   }
 }
 
@@ -213,7 +257,9 @@ interface OpenAIConnection {
   statsCollector?: StatsCollector;
   audioElement?: HTMLAudioElement;
   audioStream?: MediaStream;
+  microphoneTracks?: MediaStreamTrack[]; // Store microphone tracks for proper cleanup
   answerPollInterval?: NodeJS.Timeout;
+  signalingClient?: any; // WebSocket signaling client
 }
 
 interface OpenAITrackDetails {
@@ -223,32 +269,78 @@ interface OpenAITrackDetails {
   muted: boolean;
 }
 
+/**
+ * Updates the guide's audio element state based on attendee connections
+ * DISABLED: This was incorrectly muting OpenAI translated audio that should go to attendees
+ * @param language The language to update audio state for
+ */
+function updateGuideAudioState(language: string): void {
+  const langContext = `[${language}]`;
+  const connection = openAIConnectionsByLanguage.get(language);
+  if (!connection || !connection.audioElement) {
+    console.log(`${langContext} No audio element found to update`);
+    return;
+  }
+
+  const attendeeConnections = attendeeConnectionsByLanguage.get(language) || new Map();
+  const hasAttendees = attendeeConnections.size > 0;
+
+  // DISABLED: This was muting OpenAI translated audio instead of guide microphone feedback
+  // The OpenAI audio should ALWAYS be available for forwarding to attendees
+  console.log(`${langContext} Guide audio state update: ${attendeeConnections.size} attendee(s) connected, keeping OpenAI audio unmuted for forwarding`);
+
+  // Ensure OpenAI audio is always unmuted so it can be forwarded to attendees
+  if (connection.audioElement && connection.audioElement.muted) {
+    connection.audioElement.muted = false;
+    console.log(`${langContext} ✅ OpenAI audio unmuted to enable forwarding to attendees`);
+  }
+}
+
 export async function initGuideWebRTC(
   setTranslation: (translation: string) => void,
   language: string,
   setAttendees: (attendees: string[]) => void,
-  tourId: string
+  tourId: string,
+  tourCode: string
 ): Promise<void> {
-  console.log(`[${language}] Initializing Guide WebRTC...`);
-
-
-  // Add this line to initialize the Translation Monitor
-  initializeMonitor();
-
-
+  const langContext = `[${language}]`;
+  console.log(`${langContext} Initializing Guide WebRTC with WebSocket signaling...`);
 
   // Cleanup existing connection for this language if it exists
   if (openAIConnectionsByLanguage.has(language)) {
-    console.log(`[${language}] Cleaning up existing connection before reinitializing`);
+    console.log(`${langContext} Cleaning up existing connection before reinitializing`);
     cleanupGuideWebRTC(language);
   }
 
-  const connection = await setupOpenAIConnection(language, setTranslation, setAttendees, tourId);
+  // Use tourCode directly for WebSocket room consistency with attendees
+  console.log(`${langContext} Using tourCode for WebSocket: ${tourCode} (tourId: ${tourId})`);
+
+  // Initialize WebSocket signaling first
+  console.log(`${langContext} Initializing WebSocket signaling for guide...`);
+  const signalingClient = await initializeSignaling(tourCode, language, 'guide');
+  
+  if (!signalingClient) {
+    console.error(`${langContext} Failed to initialize WebSocket signaling`);
+    // Fall back to HTTP polling
+    console.log(`${langContext} Falling back to HTTP polling for signaling`);
+  } else {
+    console.log(`${langContext} ✅ WebSocket signaling initialized successfully`);
+  }
+
+  // Log existing connections for debugging
+  if (openAIConnectionsByLanguage.size > 0) {
+    console.log(`${langContext} Existing connections before setup:`);
+    for (const [existingLang, conn] of openAIConnectionsByLanguage.entries()) {
+      console.log(`${langContext} - ${existingLang}: Connection state=${conn.pc.connectionState}, tracks=${conn.microphoneTracks?.length || 0}`);
+    }
+  }
+
+  const connection = await setupOpenAIConnection(language, setTranslation, setAttendees, tourId, signalingClient);
   if (connection) {
     openAIConnectionsByLanguage.set(language, connection);
-    console.log(`[${language}] Guide WebRTC initialized successfully`);
+    console.log(`${langContext} Guide WebRTC initialized successfully`);
   } else {
-    console.error(`[${language}] Failed to initialize Guide WebRTC`);
+    console.error(`${langContext} Failed to initialize Guide WebRTC`);
     throw new Error(`Failed to initialize WebRTC for ${language}`);
   }
 }
@@ -289,11 +381,10 @@ export function toggleMicrophoneMute(mute: boolean): void {
 export function cleanupGuideWebRTC(specificLanguage?: string): void {
   console.log(`Cleaning up Guide WebRTC connection${specificLanguage ? ` for ${specificLanguage}` : 's'}...`);
 
-  // Add this line to clean up the monitor
-  cleanupMonitor();
 
   const cleanupConnection = (language: string, connection: OpenAIConnection) => {
-    console.log(`[${language}] Cleaning up connection...`);
+    const langContext = `[${language}]`;
+    console.log(`${langContext} Cleaning up connection...`);
 
     // Stop audio monitoring
     if (connection.audioMonitor) {
@@ -303,6 +394,46 @@ export function cleanupGuideWebRTC(specificLanguage?: string): void {
     // Clean up audio element
     if (connection.audioElement) {
       connection.audioElement.srcObject = null;
+    }
+
+    // Handle microphone tracks carefully - only stop if not used by other connections
+    if (connection.microphoneTracks && connection.microphoneTracks.length > 0) {
+      console.log(`${langContext} Checking if microphone tracks can be stopped...`);
+
+      // Check if any other active connections are using these tracks
+      let tracksInUse = false;
+      const trackIds = connection.microphoneTracks.map(track => track.id);
+
+      for (const [otherLang, otherConn] of openAIConnectionsByLanguage.entries()) {
+        // Skip the current connection being cleaned up
+        if (otherLang === language) continue;
+
+        // Check if the other connection is using any of our tracks
+        if (otherConn.microphoneTracks) {
+          const sharedTracks = otherConn.microphoneTracks.filter(track =>
+            trackIds.includes(track.id) && track.readyState === 'live'
+          );
+
+          if (sharedTracks.length > 0) {
+            console.log(`${langContext} Microphone tracks are still in use by ${otherLang} connection, not stopping them`);
+            tracksInUse = true;
+            break;
+          }
+        }
+      }
+
+      // Only stop tracks if they're not used by other connections
+      if (!tracksInUse) {
+        console.log(`${langContext} Stopping ${connection.microphoneTracks.length} microphone tracks...`);
+        connection.microphoneTracks.forEach(track => {
+          track.stop();
+          console.log(`${langContext} Stopped microphone track: ${track.id}`);
+        });
+      } else {
+        console.log(`${langContext} Microphone tracks are shared with other connections, not stopping them`);
+      }
+    } else {
+      console.log(`${langContext} No microphone tracks to stop`);
     }
 
     // Close data channel if open
@@ -326,6 +457,11 @@ export function cleanupGuideWebRTC(specificLanguage?: string): void {
     // Clear the answer polling interval
     if (connection.answerPollInterval) {
       clearInterval(connection.answerPollInterval);
+    }
+
+    // Disconnect signaling client
+    if (connection.signalingClient) {
+      connection.signalingClient.disconnect();
     }
 
     // Remove from tracked connections
@@ -352,7 +488,8 @@ async function setupOpenAIConnection(
   language: string,
   setTranslation: (translation: string) => void,
   setAttendees: (attendees: string[]) => void,
-  tourId: string
+  tourId: string,
+  signalingClient?: any
 ): Promise<OpenAIConnection | null> {
   const langContext = `[${language}]`;
   console.log(`${langContext} Setting up OpenAI connection...`);
@@ -388,30 +525,103 @@ async function setupOpenAIConnection(
     return null;
   }
 
-  // Create and configure the OpenAI peer connection
-  const openaiPC = new RTCPeerConnection({
-    iceServers: [
-      {
-        urls: 'stun:stun.l.google.com:19302'
-      }
-    ]
-  });
+  // Create and configure the OpenAI peer connection with Xirsys
+  let openaiPC: RTCPeerConnection;
 
-  // Pre-load instruction audio for this language if needed
-  let instructionBuffer: AudioBuffer | null = null;
-  if (!sentInstructions.has(language)) {
-    try {
-      console.log(`${langContext} Loading instruction audio...`);
-      instructionBuffer = await loadInstruction(language);
-      console.log(`${langContext} Instruction audio loaded, duration: ${instructionBuffer.duration}s`);
-    } catch (error) {
-      console.error(`${langContext} Error loading instruction audio:`, error);
-      // Continue with connection setup even if instruction loading fails
+  try {
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] Fetching Xirsys ICE servers for OpenAI connection...`);
+
+    // Import and fetch Xirsys servers
+    const { getXirsysICEServers, createXirsysRTCConfiguration } = await import('./xirsysConfig');
+    const xirsysServers = await getXirsysICEServers();
+
+    if (xirsysServers && xirsysServers.length > 0) {
+      console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for OpenAI connection`);
+      openaiPC = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers));
+    } else {
+      throw new Error('No Xirsys servers available');
     }
+  } catch (error) {
+    console.warn(`${langContext} [GUIDE-OPENAI-ICE] ⚠️ Xirsys unavailable, using fallback servers:`, error);
+
+    // Fallback to public servers
+    openaiPC = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+        { urls: "stun:stun.cloudflare.com:3478" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
+      ],
+      // Expert WebRTC configuration optimized for production
+      iceCandidatePoolSize: 6,   // Increased for global infrastructure
+      bundlePolicy: 'max-bundle', // Bundle all media on single transport
+      rtcpMuxPolicy: 'require',   // Multiplex RTP and RTCP for efficiency
+      iceTransportPolicy: 'all'   // Use all transport types
+    });
   }
+
+  console.log(`${langContext} [GUIDE-OPENAI-ICE] Created OpenAI peer connection with ${openaiPC.getConfiguration().iceServers?.length} ICE servers (Xirsys TURN/STUN)`);
+
+  // Instruction audio loading removed
 
   // Create data channel for OpenAI events
   const openaiDC = openaiPC.createDataChannel('oai-events');
+
+  /**
+   * Updates the session settings to optimize VAD for real-time translation
+   * Note: This function is now integrated into sendTranslationInstructions to avoid conflicts
+   * @param dataChannel The WebRTC data channel to send updates through
+   * @param langContext The language context for logging
+   */
+  function updateSessionVADSettings(dataChannel: RTCDataChannel, langContext: string): void {
+    try {
+      if (dataChannel.readyState !== 'open') {
+        console.warn(`${langContext} Data channel not open, cannot update VAD settings`);
+        return;
+      }
+
+      // Note: VAD settings are now included in the main session.update with instructions
+      // This function is kept for backward compatibility but should use the combined approach
+      console.log(`${langContext} VAD settings are now managed through sendTranslationInstructions to avoid session conflicts`);
+
+      // If instructions haven't been sent yet, send them with VAD settings
+      if (!sentInstructions.has(language)) {
+        const instructions = getTranslationInstructions(language);
+        const sessionUpdateEvent = {
+          type: "session.update",
+          session: {
+            instructions: instructions,
+            modalities: ["audio", "text"],
+            turn_detection: {
+              type: "server_vad",
+              silence_duration_ms: 300,
+              create_response: true
+            }
+          }
+        };
+
+        console.log(`${langContext} Sending combined instructions and VAD settings`);
+        dataChannel.send(JSON.stringify(sessionUpdateEvent));
+        sentInstructions.add(language);
+      }
+    } catch (error) {
+      console.error(`${langContext} Error updating session VAD settings:`, error);
+    }
+  }
+
+  // Add onopen handler to send instructions when the channel is ready
+  openaiDC.onopen = () => {
+    console.log(`${langContext} Data channel opened, sending translation instructions`);
+    sendTranslationInstructions(openaiDC, language, langContext);
+
+    // Update VAD settings for more responsive translations
+    updateSessionVADSettings(openaiDC, langContext);
+  };
+
   openaiDC.onmessage = (event: MessageEvent) => {
     try {
       const data = JSON.parse(event.data);
@@ -435,15 +645,46 @@ async function setupOpenAIConnection(
           break;
         case 'session.updated':
           console.log(`${langContext} Session updated successfully:`, data.session);
+          // Log VAD settings if present
+          if (data.session?.turn_detection) {
+            console.log(`${langContext} VAD settings:`, {
+              type: data.session.turn_detection.type,
+              silence_duration_ms: data.session.turn_detection.silence_duration_ms,
+              create_response: data.session.turn_detection.create_response
+            });
+          }
           break;
         case 'input_audio_buffer.speech_stopped':
           console.log(`${langContext} Speech stopped, OpenAI may generate a response`);
+          // Resend instructions after speech stops to maintain context
+          sendTranslationInstructions(openaiDC, language, langContext, true);
+          break;
+        case 'error':
+          console.error(`${langContext} Error from OpenAI:`, data.error || data);
+          // If we get an error related to VAD or turn detection, try to update settings
+          if (data.error?.message?.toLowerCase().includes('turn') ||
+              data.error?.message?.toLowerCase().includes('vad') ||
+              data.error?.message?.toLowerCase().includes('detection')) {
+            console.log(`${langContext} Attempting to fix VAD settings after error`);
+            updateSessionVADSettings(openaiDC, langContext);
+          }
           break;
         case 'response.error':
           console.error(`${langContext} Translation error for ${language}:`, data.error);
           break;
-        case 'error':
-          console.error(`${langContext} Error from OpenAI:`, data);
+        case 'output_audio_buffer.started':
+          console.log(`${langContext} 🎵 Audio output generation started`);
+          break;
+        case 'output_audio_buffer.delta':
+          console.log(`${langContext} 🎵 Audio output delta received (${data.delta ? 'with data' : 'empty'})`);
+          // The actual audio data is sent via WebRTC audio track, not data channel
+          // This event just indicates audio is being generated
+          break;
+        case 'output_audio_buffer.done':
+          console.log(`${langContext} 🎵 Audio output generation completed`);
+          break;
+        case 'output_audio_buffer.stopped':
+          console.log(`${langContext} 🎵 Audio output stopped`);
           break;
         default:
           console.log(`${langContext} Received message for ${language}:`, data);
@@ -459,64 +700,115 @@ async function setupOpenAIConnection(
 
   // Get microphone access and set up audio processing
   let audioMonitor: AudioMonitor | null = null;
+  let microphoneTracks: MediaStreamTrack[] = [];
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1, // Mono audio for better translation
-        sampleRate: 16000, // Optimal for speech recognition
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
+    console.log(`${langContext} Requesting microphone access...`);
+
+    // Check if we already have an active microphone stream from another connection
+    let existingMicStream: MediaStream | null = null;
+    let sourceLanguage: string | null = null;
+
+    // First, look for an existing connection with live tracks
+    for (const [existingLang, conn] of openAIConnectionsByLanguage.entries()) {
+      if (conn.microphoneTracks && conn.microphoneTracks.length > 0 &&
+          conn.microphoneTracks[0].readyState === 'live') {
+        console.log(`${langContext} Found existing LIVE microphone stream from ${existingLang} connection`);
+        console.log(`${langContext} Track details: id=${conn.microphoneTracks[0].id}, enabled=${conn.microphoneTracks[0].enabled}`);
+
+        // Create a new stream with cloned tracks to avoid interference
+        existingMicStream = new MediaStream();
+        conn.microphoneTracks.forEach(track => {
+          // Don't clone, use the same track to ensure mute state is synchronized
+          existingMicStream!.addTrack(track);
+        });
+
+        sourceLanguage = existingLang;
+        break;
       }
+    }
+
+    // Use existing stream or request a new one
+    let stream: MediaStream;
+    if (existingMicStream) {
+      console.log(`${langContext} Reusing existing microphone stream from ${sourceLanguage} connection`);
+      stream = existingMicStream;
+
+      // Log all tracks in the reused stream
+      const tracks = stream.getTracks();
+      console.log(`${langContext} Reused stream has ${tracks.length} tracks:`);
+      tracks.forEach((track, index) => {
+        console.log(`${langContext} Track ${index}: id=${track.id}, kind=${track.kind}, enabled=${track.enabled}, readyState=${track.readyState}`);
+      });
+    } else {
+      console.log(`${langContext} No existing microphone stream found, requesting new one...`);
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('getUserMedia is not supported in this environment');
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1, // Mono audio for better translation
+          sampleRate: 16000, // Optimal for speech recognition
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      console.log(`${langContext} New microphone stream acquired successfully`);
+    }
+
+    // Get and store microphone tracks for later cleanup
+    microphoneTracks = stream.getTracks();
+    console.log(`${langContext} Acquired ${microphoneTracks.length} microphone tracks`);
+    microphoneTracks.forEach(track => {
+      console.log(`${langContext} Microphone track: ${track.id}, kind: ${track.kind}, readyState: ${track.readyState}, enabled=${track.enabled}`);
     });
 
-    // Set up audio monitoring
+    // Set up audio monitoring with speech resumption handler
     audioMonitor = new AudioMonitor(stream);
     audioMonitor.startMonitoring(
       () => {/* Silence detected - log removed */},
-      () => {/* Audio activity detected - log removed */}
-    );
-
-    // Add audio track to peer connection
-    stream.getTracks().forEach(track => openaiPC.addTrack(track, stream));
-
-    // Now that we have added audio tracks, try to send instruction audio if available
-    if (instructionBuffer && !sentInstructions.has(language)) {
-      // Set up retry mechanism
-      const maxRetries = 3;
-      let retryCount = 0;
-      let success = false;
-
-      while (retryCount < maxRetries && !success) {
-        try {
-          // Wait a short time to ensure tracks are properly registered
-          // Increase wait time with each retry
-          const waitTime = 100 * Math.pow(2, retryCount);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-
-          // Verify tracks exist before proceeding
-          if (verifyAudioTracks(openaiPC, langContext)) {
-            // Send instruction audio
-            console.log(`${langContext} Sending instruction audio (attempt ${retryCount + 1}/${maxRetries})...`);
-            await sendAudioSegment(instructionBuffer, openaiPC, langContext);
-            console.log(`${langContext} Instruction audio sent successfully`);
-            sentInstructions.add(language);
-            success = true;
-          } else {
-            console.warn(`${langContext} No audio tracks available (attempt ${retryCount + 1}/${maxRetries}), retrying...`);
-            retryCount++;
-          }
-        } catch (error) {
-          console.error(`${langContext} Error sending instruction audio (attempt ${retryCount + 1}/${maxRetries}):`, error);
-          retryCount++;
-          if (retryCount >= maxRetries) {
-            console.warn(`${langContext} Failed to send instruction audio after ${maxRetries} attempts, continuing with setup`);
-          }
+      () => {/* Audio activity detected - log removed */},
+      () => {
+        // Speech resumed after silence - resend instructions
+        if (openaiDC.readyState === 'open') {
+          console.log(`${langContext} Speech resumed after silence, resending translation instructions`);
+          sendTranslationInstructions(openaiDC, language, langContext, true);
         }
       }
-    }
+    );
+
+    // Set up periodic instruction refresh (every 2 minutes)
+    audioMonitor.startInstructionRefresh(() => {
+      if (openaiDC.readyState === 'open') {
+        console.log(`${langContext} Periodic instruction refresh, resending translation instructions`);
+        sendTranslationInstructions(openaiDC, language, langContext, true);
+
+        // Also refresh VAD settings periodically to ensure they're maintained
+        updateSessionVADSettings(openaiDC, langContext);
+      }
+    }, 120000);
+
+    // Add audio track to peer connection
+    microphoneTracks.forEach(track => {
+      console.log(`${langContext} 🎤 Adding microphone track to OpenAI: id=${track.id}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+      openaiPC.addTrack(track, stream);
+    });
+
+    // Instruction audio playback removed
   } catch (error) {
     console.error(`${langContext} Error accessing microphone:`, error);
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      console.error(`${langContext} Microphone access denied by user or system`);
+      throw new Error(`Microphone access denied. Please allow microphone access and try again.`);
+    } else if (error instanceof DOMException && error.name === 'NotFoundError') {
+      console.error(`${langContext} No microphone found`);
+      throw new Error(`No microphone found. Please connect a microphone and try again.`);
+    } else if (error instanceof DOMException && error.name === 'NotReadableError') {
+      console.error(`${langContext} Microphone is already in use by another application`);
+      throw new Error(`Microphone is already in use by another application. Please close other applications using the microphone.`);
+    }
     return null;
   }
 
@@ -524,234 +816,240 @@ async function setupOpenAIConnection(
   const audioElement = document.createElement('audio');
   audioElement.autoplay = true;
 
-  // Set up connection state monitoring
+  // Set up enhanced connection state monitoring
   openaiPC.oniceconnectionstatechange = () => {
-    console.log(`${langContext} ICE connection state:`, openaiPC.iceConnectionState);
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] ICE connection state changed to: ${openaiPC.iceConnectionState}`);
+
+    if (openaiPC.iceConnectionState === "connected") {
+      console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ ICE connection to OpenAI established successfully!`);
+    } else if (openaiPC.iceConnectionState === "checking") {
+      console.log(`${langContext} [GUIDE-OPENAI-ICE] ICE connectivity checks in progress...`);
+    } else if (openaiPC.iceConnectionState === "failed") {
+      console.log(`${langContext} [GUIDE-OPENAI-ICE] ❌ ICE connection to OpenAI failed`);
+    }
   };
 
   openaiPC.onconnectionstatechange = () => {
-    console.log(`${langContext} Connection state:`, openaiPC.connectionState);
+    console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] Connection state changed to: ${openaiPC.connectionState}`);
+
+    if (openaiPC.connectionState === "connected") {
+      console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] ✅ WebRTC connection to OpenAI fully established!`);
+    } else if (openaiPC.connectionState === "connecting") {
+      console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] WebRTC connection to OpenAI in progress...`);
+    } else if (openaiPC.connectionState === "failed") {
+      console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] ❌ WebRTC connection to OpenAI failed`);
+    }
+  };
+
+  openaiPC.onicegatheringstatechange = () => {
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] ICE gathering state changed to: ${openaiPC.iceGatheringState}`);
   };
 
   // Handle incoming audio tracks
   // Define the original handler as a separate function
-  const originalOnTrackHandler = async (e: RTCTrackEvent) => {
-    console.log(`${langContext} ontrack event received:`, {
-      trackKind: e.track.kind,
-      trackId: e.track.id,
-      streamCount: e.streams.length,
-      timestamp: new Date().toISOString()
-    });
-
-    if (e.track.kind === 'audio') {
+  const originalOnTrackHandler = (e: RTCTrackEvent) => {
+    try {
       console.log(`${langContext} 🎵 AUDIO TRACK RECEIVED from OpenAI 🎵`);
-      console.log(`${langContext} Track details:`, {
-        id: e.track.id,
-        enabled: e.track.enabled,
-        muted: e.track.muted,
-        readyState: e.track.readyState,
-        label: e.track.label || 'no label'
-      });
+      
+      if (e.track.kind === 'audio') {
+        console.log(`${langContext} Track details:`, {
+          id: e.track.id,
+          enabled: e.track.enabled,
+          muted: e.track.muted,
+          readyState: e.track.readyState,
+          label: e.track.label
+        });
+        
+        console.log(`${langContext} ✅ OpenAI audio track successfully received - attendees will now hear translations!`);
+        
+        const stream = e.streams[0];
+        console.log(`${langContext} Stream details:`, {
+          id: stream.id,
+          active: stream.active,
+          trackCount: stream.getTracks().length
+        });
 
-      const stream = e.streams[0];
-      console.log(`${langContext} Stream details:`, {
-        id: stream.id,
-        active: stream.active,
-        trackCount: stream.getTracks().length
-      });
-
-      // Store the stream for forwarding to attendees
-      const connection = openAIConnectionsByLanguage.get(language);
-      if (connection) {
-        connection.audioStream = stream;
-        console.log(`${langContext} Audio stream stored in connection for language: ${language}`);
-      }
-
-      // Set stream to audio element
-      console.log(`${langContext} Setting audio element srcObject to stream`);
-      audioElement.srcObject = stream;
-
-      // Configure audio element for better usability
-      audioElement.id = `guide-audio-${language}`;
-      audioElement.className = 'guide-audio-element';
-      audioElement.controls = true; // Add controls for manual playback
-      audioElement.volume = 1.0; // Ensure maximum volume
-      audioElement.muted = false; // Ensure not muted
-      audioElement.style.display = 'block'; // Make it visible
-
-      // Create a container for the audio element with proper styling
-      const audioContainer = document.createElement('div');
-      audioContainer.id = `guide-audio-container-${language}`;
-      audioContainer.className = 'guide-audio-container';
-      audioContainer.style.position = 'fixed';
-      audioContainer.style.bottom = '10px';
-      audioContainer.style.right = '10px';
-      audioContainer.style.zIndex = '9999';
-      audioContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-      audioContainer.style.padding = '10px';
-      audioContainer.style.borderRadius = '5px';
-      audioContainer.style.color = 'white';
-
-      // Add a label to show which language this is
-      const audioLabel = document.createElement('div');
-      audioLabel.textContent = `Guide Audio: ${language}`;
-      audioLabel.style.marginBottom = '5px';
-      audioLabel.style.fontWeight = 'bold';
-
-      // Add elements to the container
-      audioContainer.appendChild(audioLabel);
-      audioContainer.appendChild(audioElement);
-
-      // Add the container to the document body
-      if (!document.getElementById(audioContainer.id)) {
-        console.log(`${langContext} Adding audio element to DOM`);
-        document.body.appendChild(audioContainer);
-      } else {
-        console.log(`${langContext} Audio container already exists, updating`);
-        const existingContainer = document.getElementById(audioContainer.id);
-        existingContainer?.replaceWith(audioContainer);
-      }
-
-      // Add event listeners to audio element to track playback status
-      audioElement.onplay = () => console.log(`${langContext} Audio element started playing`);
-      audioElement.onpause = () => console.log(`${langContext} Audio element paused`);
-      audioElement.onended = () => console.log(`${langContext} Audio element playback ended`);
-      audioElement.onerror = (e) => console.error(`${langContext} Audio element error:`, e);
-
-      // Try to play the audio element
-      try {
-        console.log(`${langContext} Attempting to play audio...`);
-        const playPromise = audioElement.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => console.log(`${langContext} Audio playback started successfully`))
-            .catch(error => {
-              console.error(`${langContext} Audio playback failed:`, error);
-
-              // Create a play button for user interaction if autoplay fails
-              const playButton = document.createElement('button');
-              playButton.textContent = `Enable ${language} Audio`;
-              playButton.style.padding = '8px 16px';
-              playButton.style.backgroundColor = '#4CAF50';
-              playButton.style.color = 'white';
-              playButton.style.border = 'none';
-              playButton.style.borderRadius = '4px';
-              playButton.style.cursor = 'pointer';
-              playButton.style.marginTop = '5px';
-
-              playButton.onclick = () => {
-                audioElement.play()
-                  .then(() => {
-                    console.log(`${langContext} Audio playback started after button click`);
-                    playButton.remove();
-                  })
-                  .catch(err => console.error(`${langContext} Failed to play audio after button click:`, err));
-              };
-
-              audioContainer.appendChild(playButton);
-            });
+        // Store the stream for forwarding to attendees - with enhanced error handling
+        let connection = openAIConnectionsByLanguage.get(language);
+        
+        // CRITICAL FIX: If connection doesn't exist, check for case-insensitive match
+        if (!connection) {
+          console.log(`${langContext} Connection not found with exact match, checking case-insensitive...`);
+          const matchingEntry = Array.from(openAIConnectionsByLanguage.entries())
+            .find(([key]) => key.toLowerCase() === language.toLowerCase());
+          
+          if (matchingEntry) {
+            console.log(`${langContext} Found connection with case-insensitive match: ${matchingEntry[0]}`);
+            connection = matchingEntry[1];
+          }
         }
-      } catch (error) {
-        console.error(`${langContext} Error starting audio playback:`, error);
-      }
-
-      // Start stats collection with enhanced logging
-      console.log(`${langContext} Starting WebRTC stats collection`);
-      statsInterval = setInterval(async () => {
-        try {
-          const currentStats = await statsCollector.collectStats(openaiPC);
-          console.log(`${langContext} Connection stats:`, currentStats);
-
-          // Check if we're receiving audio packets
-          const stats = await openaiPC.getStats();
-          let bytesReceived = 0;
-          let packetsReceived = 0;
-          let packetsLost = 0;
-
-          stats.forEach(report => {
-            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-              bytesReceived = report.bytesReceived || 0;
-              packetsReceived = report.packetsReceived || 0;
-              packetsLost = report.packetsLost || 0;
-
-              console.log(`${langContext} Audio stats:`, {
-                bytesReceived,
-                packetsReceived,
-                packetsLost,
-                timestamp: report.timestamp
-              });
-            }
-          });
-
-          if (packetsReceived > 0) {
-            console.log(`${langContext} ✅ Receiving audio data: ${bytesReceived} bytes, ${packetsReceived} packets`);
+        
+        if (!connection) {
+          console.error(`${langContext} ❌ CRITICAL: No OpenAI connection found for language ${language} - cannot store audio stream!`);
+          console.error(`${langContext} ❌ Available languages: ${Array.from(openAIConnectionsByLanguage.keys()).join(', ')}`);
+          
+          // CRITICAL FIX: Create connection if missing with proper initialization
+          console.log(`${langContext} 🔄 Creating missing connection for language ${language}`);
+          connection = {
+            pc: openaiPC,
+            dc: openaiDC,
+            audioStream: stream,
+            microphoneTracks: [],
+            audioElement: document.createElement('audio')
+          };
+          
+          // Store the new connection
+          openAIConnectionsByLanguage.set(language, connection);
+          console.log(`${langContext} ✅ Created and stored new connection with audio stream`);
+          
+          // Set up the audio element for the new connection
+          const audioElement = connection.audioElement;
+          if (audioElement) {
+            audioElement.autoplay = true;
+            audioElement.controls = true;
+            audioElement.muted = false;
+            audioElement.volume = 1.0;
+            audioElement.style.display = 'block';
+            audioElement.style.width = '100%';
+            audioElement.setAttribute('data-language', language);
+            
+            console.log(`${langContext} Setting audio element srcObject to stream`);
+            audioElement.srcObject = stream;
+          }
+        } else {
+          console.log(`${langContext} ✅ Found existing connection for ${language}, storing audio stream`);
+          connection.audioStream = stream;
+          
+          // Verify storage
+          if (connection.audioStream) {
+            console.log(`${langContext} ✅ Audio stream successfully stored in connection`);
           } else {
-            console.warn(`${langContext} ⚠️ No audio packets received yet`);
-          }
-        } catch (error) {
-          console.error(`${langContext} Error collecting stats:`, error);
-        }
-      }, 5000);
-
-      console.log(`${langContext} Running audio verification...`);
-      const verification = await verifyOpenAIAudio(stream, language);
-
-      if (!verification.isValid) {
-        console.error(`${langContext} ❌ Audio verification failed:`, verification.details);
-        if (verification.details.some(track => track.readyState === 'ended')) {
-          console.error(`${langContext} Track ended prematurely, connection may need to be re-established`);
-
-          // Clean up monitoring
-          if (audioMonitor) {
-            audioMonitor.stop();
-            audioMonitor = null;
-          }
-          if (statsInterval) {
-            clearInterval(statsInterval);
-            statsInterval = null;
-          }
-        }
-        return;
-      }
-
-      console.log(`${langContext} ✅ Audio verification passed, stream is ready for use`);
-
-      // Forward audio to existing attendees
-      const attendeeConnections = attendeeConnectionsByLanguage.get(language);
-      if (attendeeConnections && attendeeConnections.size > 0) {
-        console.log(`${langContext} Forwarding audio to ${attendeeConnections.size} existing attendees`);
-
-        for (const [attendeeId, connection] of attendeeConnections.entries()) {
-          try {
-            stream.getTracks().forEach(track => {
-              console.log(`${langContext} Adding track ${track.id} to attendee ${attendeeId}`);
-              connection.pc.addTrack(track, stream);
-            });
-            console.log(`${langContext} Successfully forwarded audio to attendee ${attendeeId}`);
-          } catch (error) {
-            console.error(`${langContext} Error forwarding audio to attendee ${attendeeId}:`, error);
+            console.error(`${langContext} ❌ Failed to store audio stream in connection!`);
           }
         }
       } else {
-        console.log(`${langContext} No attendees connected yet, audio will be forwarded when they join`);
+        console.log(`${langContext} Received non-audio track: ${e.track.kind}`);
       }
-    } else {
-      console.log(`${langContext} Received non-audio track: ${e.track.kind}`);
+    } catch (error) {
+      console.error(`${langContext} ❌ Error in ontrack handler:`, error);
+      console.error(`${langContext} ❌ This error prevented audio stream from being stored!`);
+
+      // Try to store the stream anyway if we have it
+      if (e.track.kind === 'audio' && e.streams.length > 0) {
+        try {
+          const stream = e.streams[0];
+          const connection = openAIConnectionsByLanguage.get(language);
+          if (connection) {
+            connection.audioStream = stream;
+            console.log(`${langContext} ⚠️ Audio stream stored despite error in handler`);
+          }
+        } catch (fallbackError) {
+          console.error(`${langContext} ❌ Fallback stream storage also failed:`, fallbackError);
+        }
+      }
     }
   };
 
-  // Replace with enhanced handler
-  openaiPC.ontrack = enhanceOnTrackHandler(originalOnTrackHandler, language);
+  // Set the original handler directly since we removed the translation monitor
+  openaiPC.ontrack = originalOnTrackHandler;
+
+  // Add debugging for peer connection state and receivers
+  openaiPC.onconnectionstatechange = () => {
+    console.log(`${langContext} 🔗 OpenAI connection state changed to: ${openaiPC.connectionState}`);
+
+    // When connected, check for receivers
+    if (openaiPC.connectionState === 'connected') {
+      console.log(`${langContext} 🔍 Checking for receivers after connection established...`);
+      const receivers = openaiPC.getReceivers();
+      console.log(`${langContext} 🔍 Found ${receivers.length} receivers`);
+
+      receivers.forEach((receiver, index) => {
+        console.log(`${langContext} 🔍 Receiver ${index}:`, {
+          track: receiver.track ? {
+            id: receiver.track.id,
+            kind: receiver.track.kind,
+            enabled: receiver.track.enabled,
+            muted: receiver.track.muted,
+            readyState: receiver.track.readyState
+          } : 'no track'
+        });
+
+        // If we find an audio track, manually trigger our handler
+        if (receiver.track && receiver.track.kind === 'audio') {
+          console.log(`${langContext} 🎵 Found audio track in receiver, manually creating stream...`);
+          const stream = new MediaStream([receiver.track]);
+
+          // Store the stream manually since ontrack didn't fire
+          const connection = openAIConnectionsByLanguage.get(language);
+          if (connection && !connection.audioStream) {
+            console.log(`${langContext} 🔄 Manually storing audio stream from receiver...`);
+            connection.audioStream = stream;
+            console.log(`${langContext} ✅ Audio stream manually stored: id=${stream.id}, tracks=${stream.getTracks().length}`);
+          }
+        }
+      });
+    }
+  };
 
   // Create and set local description
   try {
     const offer = await openaiPC.createOffer();
 
-    // Ensure the SDP has a=sendrecv for audio
-    const modifiedSdp = offer.sdp?.replace(
-      /(m=audio.*\r\n(?:.*\r\n)*)/,
-      '$1a=sendrecv\r\n'
-    );
+    // Enhance the SDP for better audio compatibility
+    let modifiedSdp = offer.sdp;
+
+    // CRITICAL FIX: Guide needs sendrecv - receives from OpenAI, sends to attendees
+    if (modifiedSdp) {
+      // Remove any existing direction attributes to avoid conflicts
+      modifiedSdp = modifiedSdp.replace(/a=(sendrecv|sendonly|recvonly|inactive)\r?\n/g, '');
+
+      // Add sendrecv after the audio m-line since guide receives from OpenAI AND sends to attendees
+      modifiedSdp = modifiedSdp.replace(
+        /(m=audio[^\r\n]*\r?\n)/,
+        '$1a=sendrecv\r\n'
+      );
+
+      console.log(`${langContext} FIXED SDP directionality: guide sendrecv (receives from OpenAI, sends to attendees)`);
+    }
+
+    // Prioritize Opus codec for better audio quality
+    if (modifiedSdp?.includes('opus/48000/2')) {
+      console.log(`${langContext} Prioritizing Opus codec in SDP for better audio quality`);
+
+      // Extract the m=audio line and all its attributes
+      const audioSection = modifiedSdp.match(/(m=audio [^\r\n]+)(\r\n[a-z]=[^\r\n]+)*/g)?.[0];
+
+      if (audioSection) {
+        // Find the Opus payload type
+        const opusPayloadType = audioSection.match(/a=rtpmap:(\d+) opus\/48000\/2/)?.[1];
+
+        if (opusPayloadType) {
+          console.log(`${langContext} Found Opus payload type: ${opusPayloadType}`);
+
+          // Extract the m=audio line
+          const mLine = audioSection.match(/m=audio [^\r\n]+/)?.[0];
+
+          if (mLine) {
+            // Split the m-line into parts
+            const parts = mLine.split(' ');
+
+            // Find all payload types
+            const payloadTypes = parts.slice(3);
+
+            // Remove the Opus payload type from the list
+            const filteredPayloadTypes = payloadTypes.filter(pt => pt !== opusPayloadType);
+
+            // Create a new m-line with Opus first
+            const newMLine = `${parts[0]} ${parts[1]} ${parts[2]} ${opusPayloadType} ${filteredPayloadTypes.join(' ')}`;
+
+            // Replace the old m-line with the new one
+            modifiedSdp = modifiedSdp.replace(mLine, newMLine);
+
+            console.log(`${langContext} Modified m-line to prioritize Opus: ${newMLine}`);
+          }
+        }
+      }
+    }
 
     const modifiedOffer = new RTCSessionDescription({
       type: 'offer',
@@ -858,16 +1156,21 @@ async function setupOpenAIConnection(
           });
 
           if (response.ok) {
-            console.log(`${langContext} SDP offer successfully stored in Redis for attendees via API`);
+            console.log(`${langContext} ✅ SDP offer successfully stored in Redis for attendees via API`);
             storeSuccess = true;
             break;
           } else {
-            // If the API fails, try to get a Redis client and execute the transaction directly
-            console.warn(`${langContext} API storage failed, attempting direct Redis transaction...`);
+            // Log detailed error information
+            const errorText = await response.text();
+            console.error(`${langContext} ❌ API storage failed with status ${response.status}: ${response.statusText}`);
+            console.error(`${langContext} ❌ Error response: ${errorText}`);
 
-            // This would require importing a Redis client, which we don't have direct access to here
-            // Instead, we'll retry the API with exponential backoff
-            console.error(`${langContext} Failed to store SDP offer via API (attempt ${attempt})`);
+            // Check for specific authentication errors
+            if (response.status === 401) {
+              console.error(`${langContext} 🚨 AUTHENTICATION ERROR: Guide is not properly authenticated!`);
+              console.error(`${langContext} 🚨 Check that guide is logged in with valid JWT token`);
+            }
+
             if (attempt < maxStoreAttempts) {
               const backoffTime = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
               console.log(`${langContext} Retrying in ${backoffTime}ms...`);
@@ -908,14 +1211,79 @@ async function setupOpenAIConnection(
       throw error; // Rethrow to indicate failure
     }
 
-    // Start polling for attendee answers
-    try {
-      console.log(`${langContext} About to start polling for attendee answers...`);
-      pollForAttendeeAnswers(language, tourId, setAttendees);
-      console.log(`${langContext} Polling for attendee answers started`);
-    } catch (error) {
-      console.error(`${langContext} Error starting polling for attendee answers:`, error);
+    // Setup WebSocket handlers for real-time signaling or fall back to HTTP polling
+    if (signalingClient) {
+      console.log(`${langContext} Setting up WebSocket handlers for real-time signaling...`);
+      
+      // Handle incoming answers via WebSocket
+      signalingClient.onAnswer((answer: RTCSessionDescriptionInit, fromAttendeeId?: string) => {
+        if (fromAttendeeId) {
+          console.log(`${langContext} Received answer via WebSocket from attendee ${fromAttendeeId}`);
+          const answerData = {
+            attendeeId: fromAttendeeId,
+            answer: answer,
+            timestamp: Date.now()
+          };
+          processAttendeeAnswer(language, tourId, answerData);
+        }
+      });
+
+      // Handle incoming ICE candidates via WebSocket  
+      signalingClient.onIceCandidate((candidate: any, fromAttendeeId?: string) => {
+        if (fromAttendeeId) {
+          console.log(`${langContext} Received ICE candidate via WebSocket from attendee ${fromAttendeeId}`);
+          const attendeeConnections = attendeeConnectionsByLanguage.get(language);
+          const attendeeConnection = attendeeConnections?.get(fromAttendeeId);
+          
+          if (attendeeConnection) {
+            attendeeConnection.pc.addIceCandidate(new RTCIceCandidate(candidate))
+              .then(() => {
+                console.log(`${langContext} ✅ Added ICE candidate from attendee ${fromAttendeeId} via WebSocket`);
+              })
+              .catch((error) => {
+                console.error(`${langContext} Error adding ICE candidate from attendee ${fromAttendeeId}:`, error);
+              });
+          }
+        }
+      });
+
+      console.log(`${langContext} ✅ WebSocket signaling handlers configured`);
+    } else {
+      // CRITICAL FIX: No HTTP polling fallback - WebSocket signaling is mandatory
+      console.error(`${langContext} ❌ CRITICAL: WebSocket signaling failed to initialize`);
+      console.error(`${langContext} ❌ HTTP polling fallback DISABLED - this prevents ICE candidate delivery delays`);
+      console.error(`${langContext} ❌ Connection will be aborted to force WebSocket retry`);
+      
+      // Cleanup and throw error to trigger reconnection with WebSocket
+      if (openaiPC.connectionState !== 'closed') {
+        openaiPC.close();
+      }
+      
+      throw new Error(`WebSocket signaling required for ${language} - HTTP polling disabled to ensure ICE candidate delivery`);
     }
+
+    // Start periodic check for audio receivers (in case ontrack doesn't fire)
+    const receiverCheckInterval = setInterval(() => {
+      const connection = openAIConnectionsByLanguage.get(language);
+      if (connection && !connection.audioStream && openaiPC.connectionState === 'connected') {
+        console.log(`${langContext} 🔍 Periodic check: Looking for audio receivers...`);
+        const receivers = openaiPC.getReceivers();
+
+        for (const receiver of receivers) {
+          if (receiver.track && receiver.track.kind === 'audio' && receiver.track.readyState === 'live') {
+            console.log(`${langContext} 🎵 Found live audio track in periodic check!`);
+            const stream = new MediaStream([receiver.track]);
+            connection.audioStream = stream;
+            console.log(`${langContext} ✅ Audio stream stored from periodic check: id=${stream.id}`);
+            clearInterval(receiverCheckInterval);
+            break;
+          }
+        }
+      } else if (connection && connection.audioStream) {
+        // Audio stream found, stop checking
+        clearInterval(receiverCheckInterval);
+      }
+    }, 1000); // Check every second
 
     return {
       pc: openaiPC,
@@ -923,6 +1291,9 @@ async function setupOpenAIConnection(
       audioMonitor,
       statsCollector,
       audioElement,
+      audioStream: undefined, // Will be set by ontrack handler when audio is received
+      microphoneTracks: microphoneTracks, // Include microphone tracks for proper cleanup
+      signalingClient: signalingClient, // Store signaling client for cleanup
     };
 
   } catch (error) {
@@ -1028,10 +1399,21 @@ async function pollForAttendeeAnswers(
 async function processAttendeeAnswer(
   language: string,
   tourId: string,
-  answerData: any
+  answerData: any,
+  retryCount: number = 0
 ): Promise<void> {
   const langContext = `[${language}]`;
   console.log(`${langContext} Processing attendee answer:`, answerData);
+
+  // DEBUGGING: Check audio stream status at the very beginning
+  const connectionCheck = openAIConnectionsByLanguage.get(language);
+  console.log(`${langContext} 🔍 INITIAL CHECK - Connection exists: ${!!connectionCheck}`);
+  if (connectionCheck) {
+    console.log(`${langContext} 🔍 INITIAL CHECK - audioStream exists: ${!!connectionCheck.audioStream}`);
+    if (connectionCheck.audioStream) {
+      console.log(`${langContext} 🔍 INITIAL CHECK - audioStream details: id=${connectionCheck.audioStream.id}, active=${connectionCheck.audioStream.active}, tracks=${connectionCheck.audioStream.getTracks().length}`);
+    }
+  }
 
   try {
     // Extract attendee ID and answer SDP
@@ -1073,7 +1455,125 @@ async function processAttendeeAnswer(
     }
 
     // Create a new peer connection for this attendee
-    const attendeePC = createAttendeeConnection(language, attendeeId, tourId);
+    console.log(`${langContext} 🔍 BEFORE createAttendeeConnection - Checking audio stream...`);
+    const beforeConnection = openAIConnectionsByLanguage.get(language);
+    if (beforeConnection) {
+      console.log(`${langContext} 🔍 BEFORE - audioStream exists: ${!!beforeConnection.audioStream}`);
+    }
+
+    const attendeePC = await createAttendeeConnection(language, attendeeId, tourId);
+
+    console.log(`${langContext} 🔍 AFTER createAttendeeConnection - Checking audio stream...`);
+    const afterConnection = openAIConnectionsByLanguage.get(language);
+    if (afterConnection) {
+      console.log(`${langContext} 🔍 AFTER - audioStream exists: ${!!afterConnection.audioStream}`);
+    }
+
+    // Add the OpenAI audio track to the attendee connection
+    try {
+      console.log(`${langContext} Adding OpenAI audio track to attendee ${attendeeId} connection`);
+
+      // Get the OpenAI audio stream from the main connection
+      const openAIConnection = openAIConnectionsByLanguage.get(language);
+      if (!openAIConnection || !openAIConnection.pc) {
+        console.error(`${langContext} No OpenAI connection found for ${language}`);
+        return;
+      }
+
+      // Debug the connection state
+      console.log(`${langContext} 🔍 Debugging OpenAI connection state:`);
+      console.log(`${langContext} 🔍 Connection exists: ${!!openAIConnection}`);
+      console.log(`${langContext} 🔍 Connection.pc exists: ${!!openAIConnection.pc}`);
+      console.log(`${langContext} 🔍 Connection object reference: ${openAIConnection.constructor.name}@${openAIConnection.pc.connectionState}`);
+      console.log(`${langContext} 🔍 Connection.audioStream exists: ${!!openAIConnection.audioStream}`);
+
+      if (openAIConnection.audioStream) {
+        console.log(`${langContext} 🔍 AudioStream details: id=${openAIConnection.audioStream.id}, active=${openAIConnection.audioStream.active}, tracks=${openAIConnection.audioStream.getTracks().length}`);
+      }
+
+      // Check if we have the stored audio stream
+      if (!openAIConnection.audioStream) {
+        console.error(`${langContext} ❌ No audio stream found in OpenAI connection - audioStream is missing`);
+        console.error(`${langContext} ❌ This means the ontrack handler didn't store the stream properly`);
+        console.error(`${langContext} ❌ Or the audioStream was cleared/lost after storage`);
+        console.error(`${langContext} ❌ Or the attendee connected before the audio stream was received`);
+
+        // Try to recover the audio stream from peer connection receivers
+        console.log(`${langContext} 🔄 Attempting to recover audio stream from peer connection receivers...`);
+        const receivers = openAIConnection.pc.getReceivers();
+        console.log(`${langContext} 🔍 Found ${receivers.length} receivers in peer connection`);
+
+        let recoveredStream: MediaStream | null = null;
+        for (const receiver of receivers) {
+          if (receiver.track && receiver.track.kind === 'audio' && receiver.track.readyState === 'live') {
+            console.log(`${langContext} 🎵 Found live audio track in receiver: id=${receiver.track.id}`);
+            recoveredStream = new MediaStream([receiver.track]);
+            openAIConnection.audioStream = recoveredStream;
+            console.log(`${langContext} ✅ Audio stream recovered from receiver: id=${recoveredStream.id}`);
+            break;
+          }
+        }
+
+        if (!recoveredStream) {
+          // Let's wait a bit and retry in case the audio stream arrives soon (max 3 retries)
+          if (retryCount < 3) {
+            console.log(`${langContext} 🔄 No audio stream recovered, waiting 2 seconds then retrying... (attempt ${retryCount + 1}/3)`);
+            setTimeout(async () => {
+              console.log(`${langContext} 🔄 Retrying attendee connection after waiting for audio stream... (attempt ${retryCount + 1}/3)`);
+              await processAttendeeAnswer(language, tourId, answerData, retryCount + 1);
+            }, 2000);
+          } else {
+            console.error(`${langContext} ❌ Failed to connect attendee after 3 retries - audio stream never became available`);
+          }
+          return;
+        }
+      }
+
+      // Get audio tracks from the stored stream
+      const audioTracks = openAIConnection.audioStream!.getTracks().filter(track => track.kind === 'audio');
+
+      if (audioTracks.length === 0) {
+        console.error(`${langContext} No audio tracks found in stored audio stream`);
+        return;
+      }
+
+      // Add all audio tracks to the attendee connection
+      audioTracks.forEach((track, index) => {
+        console.log(`${langContext} Adding audio track ${index}: id=${track.id}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+
+        // CRITICAL FIX: Check if track is muted and log warning
+        if (track.muted) {
+          console.warn(`${langContext} ⚠️ WARNING: Track ${index} is MUTED before adding to attendee! This will cause no audio.`);
+          console.warn(`${langContext} Track details: id=${track.id}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+        }
+
+        try {
+          attendeePC.addTrack(track, openAIConnection.audioStream!);
+          console.log(`${langContext} ✅ Successfully added audio track ${index} to attendee ${attendeeId}`);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'InvalidAccessError') {
+            console.log(`${langContext} ⚠️ Track ${index} already added to attendee ${attendeeId} (this is normal)`);
+          } else {
+            console.error(`${langContext} ❌ Error adding track ${index} to attendee ${attendeeId}:`, error);
+          }
+        }
+      });
+
+      console.log(`${langContext} Processed ${audioTracks.length} OpenAI audio track(s) for attendee ${attendeeId} connection`);
+
+      // Create offer for this attendee connection
+      const offer = await attendeePC.createOffer({
+        offerToReceiveAudio: false, // Guide sends audio, doesn't receive
+        offerToReceiveVideo: false
+      });
+
+      await attendeePC.setLocalDescription(offer);
+      console.log(`${langContext} Created and set local offer for attendee ${attendeeId}`);
+      console.log(`${langContext} [GUIDE-ICE] ICE gathering state after setLocalDescription: ${attendeePC.iceGatheringState}`);
+    } catch (error) {
+      console.error(`${langContext} Error setting up attendee ${attendeeId} connection:`, error);
+      return;
+    }
 
     // Set the remote description (the attendee's answer)
     try {
@@ -1089,6 +1589,8 @@ async function processAttendeeAnswer(
 
       await attendeePC.setRemoteDescription(new RTCSessionDescription(parsedAnswer));
       console.log(`${langContext} Set remote description for attendee ${attendeeId} successfully`);
+      console.log(`${langContext} [GUIDE-ICE] ICE connection state after setRemoteDescription: ${attendeePC.iceConnectionState}`);
+      console.log(`${langContext} [GUIDE-ICE] ICE gathering state after setRemoteDescription: ${attendeePC.iceGatheringState}`);
     } catch (error) {
       console.error(`${langContext} Error setting remote description for attendee ${attendeeId}:`, error);
       return; // Skip this attendee if we can't set the remote description
@@ -1097,39 +1599,216 @@ async function processAttendeeAnswer(
     // Forward any existing audio tracks from OpenAI to this attendee
     const openAIConnection = openAIConnectionsByLanguage.get(language);
     if (openAIConnection && openAIConnection.audioStream) {
-      openAIConnection.audioStream.getTracks().forEach(track => {
-        attendeePC.addTrack(track, openAIConnection.audioStream!);
-      });
-      console.log(`${langContext} Forwarded audio tracks to attendee ${attendeeId}`);
+      const audioStream = openAIConnection.audioStream;
+      const tracks = audioStream.getTracks();
+
+      console.log(`${langContext} Forwarding audio to attendee ${attendeeId}`);
+      console.log(`${langContext} Audio stream details: id=${audioStream.id}, active=${audioStream.active}, tracks=${tracks.length}`);
+
+      if (tracks.length === 0) {
+        console.warn(`${langContext} No tracks found in audio stream for attendee ${attendeeId}`);
+      } else {
+        // Track the senders we add for verification
+        const addedSenders: RTCRtpSender[] = [];
+
+        // Process tracks sequentially to avoid race conditions
+        for (let index = 0; index < tracks.length; index++) {
+          const track = tracks[index];
+          console.log(`${langContext} Track ${index} to forward: id=${track.id}, kind=${track.kind}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+
+          // CRITICAL CHECK: Warn if track is muted
+          if (track.muted) {
+            console.error(`${langContext} 🚨 CRITICAL: Track ${index} is MUTED during forwarding! This will cause no audio for attendees.`);
+            console.error(`${langContext} Track details: id=${track.id}, enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`);
+
+            // Try to work around muted tracks by cloning them
+            console.log(`${langContext} 🔧 ATTEMPTING FIX: Trying to clone muted track to get unmuted version`);
+            try {
+              const clonedTrack = track.clone();
+              console.log(`${langContext} Cloned track: id=${clonedTrack.id}, muted=${clonedTrack.muted}, enabled=${clonedTrack.enabled}`);
+
+              if (!clonedTrack.muted) {
+                console.log(`${langContext} ✅ SUCCESS: Cloned track is not muted, will use cloned version`);
+                // Replace the track in the stream with the cloned version
+                audioStream.removeTrack(track);
+                audioStream.addTrack(clonedTrack);
+                console.log(`${langContext} Replaced muted track with cloned unmuted track in stream`);
+              } else {
+                console.log(`${langContext} ⚠️ Cloned track is still muted, will proceed with original`);
+              }
+            } catch (cloneError) {
+              console.error(`${langContext} Failed to clone track:`, cloneError);
+            }
+          }
+
+          // Ensure track is enabled before forwarding
+          if (!track.enabled) {
+            console.log(`${langContext} Enabling disabled track before forwarding`);
+            track.enabled = true;
+          }
+
+          try {
+            // Check if this track is already added
+            const existingSenders = attendeePC.getSenders();
+            const existingSender = existingSenders.find(sender => sender.track && sender.track.id === track.id);
+
+            if (existingSender) {
+              console.log(`${langContext} Track ${track.id} already exists for attendee ${attendeeId}`);
+
+              // CRITICAL FIX: OpenAI reuses track IDs but sends new audio content
+              // Instead of skipping, we need to ensure the sender is using the latest track reference
+              console.log(`${langContext} 🔄 Updating existing sender with latest track reference for new audio content`);
+
+              try {
+                // Replace the track in the existing sender to ensure new audio content flows through
+                await existingSender.replaceTrack(track);
+                console.log(`${langContext} ✅ Successfully updated sender with latest track for attendee ${attendeeId}`);
+
+                // Ensure the track is enabled and ready
+                if (!track.enabled) {
+                  track.enabled = true;
+                  console.log(`${langContext} Enabled track ${track.id} after sender update`);
+                }
+
+                addedSenders.push(existingSender);
+              } catch (replaceError) {
+                console.error(`${langContext} Failed to replace track in sender:`, replaceError);
+                console.log(`${langContext} 🔄 Attempting to remove and re-add track as fallback`);
+
+                // Fallback: Remove the old sender and add a new one
+                try {
+                  attendeePC.removeTrack(existingSender);
+                  const newSender = attendeePC.addTrack(track, audioStream);
+                  addedSenders.push(newSender);
+                  console.log(`${langContext} ✅ Successfully removed old sender and added new one for attendee ${attendeeId}`);
+                } catch (fallbackError) {
+                  console.error(`${langContext} Fallback track replacement also failed:`, fallbackError);
+                }
+              }
+            } else {
+              // Track is not yet added, add it normally
+              const sender = attendeePC.addTrack(track, audioStream);
+              addedSenders.push(sender);
+              console.log(`${langContext} Track ${track.id} added to attendee ${attendeeId}, sender created: ${!!sender}`);
+
+              // Log the sender's parameters for debugging
+              if (sender) {
+                const params = sender.getParameters();
+                console.log(`${langContext} Sender parameters: encodings=${JSON.stringify(params.encodings || 'none')}, transceiver state=${sender.transport?.state || 'unknown'}`);
+              }
+            }
+          } catch (error) {
+            if (error instanceof DOMException && error.name === 'InvalidAccessError') {
+              console.log(`${langContext} Track ${track.id} already exists for attendee ${attendeeId} (this is normal)`);
+            } else {
+              console.error(`${langContext} Error adding track ${track.id} to attendee ${attendeeId}:`, error);
+            }
+          }
+        }
+
+        // Verify audio forwarding
+        const audioSenders = attendeePC.getSenders().filter(sender =>
+          sender.track && sender.track.kind === 'audio'
+        );
+
+        if (audioSenders.length > 0) {
+          console.log(`${langContext} Successfully verified ${audioSenders.length} audio tracks added to attendee ${attendeeId}`);
+          audioSenders.forEach(sender => {
+            if (sender.track) {
+              console.log(`${langContext} Verified track ${sender.track.id} with state: enabled=${sender.track.enabled}, muted=${sender.track.muted}, readyState=${sender.track.readyState}`);
+
+              // Ensure track is enabled
+              if (!sender.track.enabled) {
+                console.log(`${langContext} Enabling disabled track ${sender.track.id} after verification`);
+                sender.track.enabled = true;
+              }
+            }
+          });
+        } else {
+          console.error(`${langContext} Failed to verify audio tracks for attendee ${attendeeId} - no audio senders found after adding tracks`);
+        }
+      }
+    } else {
+      console.warn(`${langContext} No audio stream available to forward to attendee ${attendeeId}`);
+      if (openAIConnection) {
+        console.log(`${langContext} OpenAI connection exists but audioStream is ${openAIConnection.audioStream ? 'present' : 'missing'}`);
+      } else {
+        console.log(`${langContext} No OpenAI connection found for language ${language}`);
+      }
     }
 
     // Start polling for this attendee's ICE candidates
     pollForAttendeeIceCandidates(language, attendeeId, tourId, attendeePC);
+
+    // Update guide's audio state - mute when attendees are connected
+    updateGuideAudioState(language);
+    console.log(`${langContext} Updated guide audio state after attendee ${attendeeId} connected`);
   } catch (error) {
     console.error(`${langContext} Error processing attendee answer:`, error);
   }
 }
 
-function createAttendeeConnection(
+async function createAttendeeConnection(
   language: string,
   attendeeId: string,
   tourId: string
-): RTCPeerConnection {
+): Promise<RTCPeerConnection> {
   const langContext = `[${language}]`;
   console.log(`${langContext} Creating connection for attendee ${attendeeId}`);
 
-  // Create a new peer connection
-  const attendeePC = new RTCPeerConnection({
-    iceServers: [
-      {
-        urls: 'stun:stun.l.google.com:19302'
-      }
-    ]
-  });
+  // Create a new peer connection with Xirsys
+  let attendeePC: RTCPeerConnection;
 
-  // Set up event handlers
+  try {
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Fetching Xirsys ICE servers for attendee ${attendeeId} connection...`);
+
+    // Import and fetch Xirsys servers
+    const { getXirsysICEServers, createXirsysRTCConfiguration } = await import('./xirsysConfig');
+    const xirsysServers = await getXirsysICEServers();
+
+    if (xirsysServers && xirsysServers.length > 0) {
+      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for attendee ${attendeeId} (ENHANCED CANDIDATES)`);
+      // Use enhanced candidate generation for better connectivity
+      attendeePC = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers, false));
+    } else {
+      throw new Error('No Xirsys servers available');
+    }
+  } catch (error) {
+    console.warn(`${langContext} [GUIDE-ATTENDEE-ICE] ⚠️ Xirsys unavailable for attendee ${attendeeId}, using fallback servers:`, error);
+
+    // Fallback to public servers with enhanced configuration
+    attendeePC = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+        { urls: "stun:stun.cloudflare.com:3478" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
+      ],
+      // Expert WebRTC configuration optimized for production
+      iceCandidatePoolSize: 15,   // Enhanced candidate generation
+      bundlePolicy: 'max-bundle', // Bundle all media on single transport
+      rtcpMuxPolicy: 'require',   // Multiplex RTP and RTCP for efficiency
+      iceTransportPolicy: 'all'   // Allow all candidate types
+    });
+  }
+
+  console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Created attendee peer connection with ${attendeePC.getConfiguration().iceServers?.length} ICE servers (Xirsys TURN/STUN)`);
+
+  // Set up enhanced event handlers with detailed logging
   attendeePC.oniceconnectionstatechange = () => {
-    console.log(`${langContext} Attendee ${attendeeId} ICE connection state:`, attendeePC.iceConnectionState);
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Attendee ${attendeeId} ICE connection state changed to: ${attendeePC.iceConnectionState}`);
+
+    if (attendeePC.iceConnectionState === "connected") {
+      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ ICE connection to attendee ${attendeeId} established successfully!`);
+    } else if (attendeePC.iceConnectionState === "checking") {
+      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ICE connectivity checks in progress for attendee ${attendeeId}...`);
+    } else if (attendeePC.iceConnectionState === "failed") {
+      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ❌ ICE connection to attendee ${attendeeId} failed`);
+    }
 
     // Clean up if connection fails or closes
     if (
@@ -1137,12 +1816,25 @@ function createAttendeeConnection(
       attendeePC.iceConnectionState === 'failed' ||
       attendeePC.iceConnectionState === 'closed'
     ) {
+      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Connection to attendee ${attendeeId} failed/closed, cleaning up`);
       cleanupAttendeeConnection(language, attendeeId);
     }
   };
 
   attendeePC.onconnectionstatechange = () => {
-    console.log(`${langContext} Attendee ${attendeeId} connection state:`, attendeePC.connectionState);
+    console.log(`${langContext} [GUIDE-ATTENDEE-CONNECTION] Attendee ${attendeeId} connection state changed to: ${attendeePC.connectionState}`);
+
+    if (attendeePC.connectionState === "connected") {
+      console.log(`${langContext} [GUIDE-ATTENDEE-CONNECTION] ✅ WebRTC connection to attendee ${attendeeId} fully established!`);
+    } else if (attendeePC.connectionState === "connecting") {
+      console.log(`${langContext} [GUIDE-ATTENDEE-CONNECTION] WebRTC connection to attendee ${attendeeId} in progress...`);
+    } else if (attendeePC.connectionState === "failed") {
+      console.log(`${langContext} [GUIDE-ATTENDEE-CONNECTION] ❌ WebRTC connection to attendee ${attendeeId} failed`);
+    }
+  };
+
+  attendeePC.onicegatheringstatechange = () => {
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Attendee ${attendeeId} ICE gathering state changed to: ${attendeePC.iceGatheringState}`);
   };
 
   // Create a data channel for sending translations
@@ -1158,15 +1850,113 @@ function createAttendeeConnection(
     attendeeConnectionsByLanguage.set(language, attendeeConnections);
   }
 
-  attendeeConnections.set(attendeeId, {
-    pc: attendeePC,
-    dc: dataChannel
+  // Create ICE connection monitor for this attendee
+  const iceMonitor = createICEMonitor(attendeePC, language, 'guide', attendeeId, 30000);
+  
+  // Start monitoring with enhanced timeout handling
+  iceMonitor.startMonitoring((event: ICETimeoutEvent) => {
+    console.error(`${langContext} ICE timeout for attendee ${attendeeId}:`, event.analysis.failureReason);
+    handleICETimeout(event);
+    
+    // Clean up failed connection
+    cleanupAttendeeConnection(language, attendeeId);
   });
 
-  // Handle ICE candidates
+  attendeeConnections.set(attendeeId, {
+    pc: attendeePC,
+    dc: dataChannel,
+    iceMonitor: iceMonitor
+  });
+
+  // Add comprehensive ICE state monitoring
+  console.log(`${langContext} [GUIDE-ICE] ✅ ICE candidate handler registered for attendee ${attendeeId}`);
+  
+  // Monitor ICE gathering state changes
+  attendeePC.onicegatheringstatechange = () => {
+    console.log(`${langContext} [GUIDE-ICE] ICE gathering state changed to: ${attendeePC.iceGatheringState} for attendee ${attendeeId}`);
+  };
+  
+  // Monitor ICE connection state changes
+  attendeePC.oniceconnectionstatechange = () => {
+    console.log(`${langContext} [GUIDE-ICE] ICE connection state changed to: ${attendeePC.iceConnectionState} for attendee ${attendeeId}`);
+    if (attendeePC.iceConnectionState === 'connected') {
+      console.log(`${langContext} [GUIDE-ICE] 🎉 ICE connection ESTABLISHED with attendee ${attendeeId}!`);
+    } else if (attendeePC.iceConnectionState === 'failed') {
+      console.error(`${langContext} [GUIDE-ICE] ❌ ICE connection FAILED with attendee ${attendeeId}`);
+    }
+  };
+
+  // Handle ICE candidates with enhanced logging
+  let candidateCount = 0;
   attendeePC.onicecandidate = (event) => {
+    console.log(`${langContext} [GUIDE-ICE] onicecandidate event triggered for attendee ${attendeeId}`, event);
     if (event.candidate) {
+      candidateCount++;
+      console.log(`${langContext} [GUIDE-ICE] Generated ICE candidate #${candidateCount} for attendee ${attendeeId}: ${event.candidate.candidate.substring(0, 50)}...`);
+      console.log(`${langContext} [GUIDE-ICE] Candidate type: ${event.candidate.type}, protocol: ${event.candidate.protocol}, priority: ${event.candidate.priority}`);
       sendIceCandidateToAttendee(event.candidate, language, attendeeId, tourId);
+    } else {
+      console.log(`${langContext} [GUIDE-ICE] ICE gathering completed for attendee ${attendeeId} (null candidate received) - Total candidates generated: ${candidateCount}`);
+
+      // Analyze ICE candidates after gathering completes
+      setTimeout(() => {
+        console.log(`${langContext} [GUIDE-ICE] 🔍 Analyzing guide's ICE candidates for attendee ${attendeeId}...`);
+        attendeePC.getStats().then(stats => {
+          let localCandidates: any[] = [];
+          let remoteCandidates: any[] = [];
+          let candidatePairs: any[] = [];
+
+          stats.forEach(report => {
+            if (report.type === 'local-candidate') {
+              localCandidates.push({
+                id: report.id,
+                type: report.candidateType,
+                protocol: report.protocol,
+                address: report.address,
+                port: report.port
+              });
+            } else if (report.type === 'remote-candidate') {
+              remoteCandidates.push({
+                id: report.id,
+                type: report.candidateType,
+                protocol: report.protocol,
+                address: report.address,
+                port: report.port
+              });
+            } else if (report.type === 'candidate-pair') {
+              candidatePairs.push({
+                state: report.state,
+                priority: report.priority,
+                nominated: report.nominated
+              });
+            }
+          });
+
+          console.log(`${langContext} [GUIDE-ICE] 📊 Guide ICE Analysis for attendee ${attendeeId}:`);
+          console.log(`${langContext} [GUIDE-ICE] Local candidates (sent to attendee): ${localCandidates.length}`, localCandidates);
+          console.log(`${langContext} [GUIDE-ICE] Remote candidates (from attendee): ${remoteCandidates.length}`, remoteCandidates);
+          console.log(`${langContext} [GUIDE-ICE] Candidate pairs: ${candidatePairs.length}`, candidatePairs);
+
+          if (localCandidates.length < 4) { // Changed from 2 to 4
+            console.warn(`${langContext} [GUIDE-ICE] ⚠️ Guide only generated ${localCandidates.length} candidates - expected more!`);
+            console.warn(`${langContext} [GUIDE-ICE] 🔄 Forcing ICE restart to generate more candidates...`);
+
+            // Force ICE restart to generate more candidates
+            attendeePC.createOffer({ iceRestart: true }).then(offer => {
+              console.log(`${langContext} [GUIDE-ICE] 🔄 ICE restart offer created for attendee ${attendeeId}`);
+              return attendeePC.setLocalDescription(offer);
+            }).then(() => {
+              console.log(`${langContext} [GUIDE-ICE] ✅ Guide ICE restart initiated for attendee ${attendeeId} - should generate more candidates`);
+            }).catch(error => {
+              console.error(`${langContext} [GUIDE-ICE] ❌ Guide ICE restart failed for attendee ${attendeeId}:`, error);
+            });
+          }
+
+          if (remoteCandidates.length === 0) {
+            console.error(`${langContext} [GUIDE-ICE] ❌ No remote candidates from attendee ${attendeeId}!`);
+          }
+        });
+      }, 2000);
     }
   };
 
@@ -1176,11 +1966,13 @@ function createAttendeeConnection(
 async function pollForAttendeeIceCandidates(
   language: string,
   attendeeId: string,
-  tourId: string,
+  tourId: string, // Remove underscore - we need this parameter
   attendeePC: RTCPeerConnection
 ): Promise<void> {
   const langContext = `[${language}]`;
-  console.log(`${langContext} Starting to poll for ICE candidates from attendee ${attendeeId}`);
+  console.log(`${langContext} 🔍 GUIDE ICE POLLING: Starting to poll for ICE candidates from attendee ${attendeeId}`);
+  console.log(`${langContext} 🔍 GUIDE ICE POLLING: Looking for candidates from attendeeId: ${attendeeId}`);
+  console.log(`${langContext} 🔍 GUIDE ICE POLLING: Using tourId: ${tourId}, language: ${language}`);
 
   let lastProcessedIndex = -1;
 
@@ -1197,30 +1989,61 @@ async function pollForAttendeeIceCandidates(
       }
 
       // Fetch ICE candidates from the attendee
-      const response = await fetch(`/api/tour/attendee-ice?language=${language}&attendeeId=${attendeeId}`, {
+      const apiUrl = `/api/tour/attendee-ice?tourId=${encodeURIComponent(tourId)}&language=${encodeURIComponent(language)}&attendeeId=${encodeURIComponent(attendeeId)}`;
+      console.log(`${langContext} 🔍 GUIDE ICE POLLING: Fetching from: ${apiUrl}`);
+
+      const response = await fetch(apiUrl, {
         credentials: 'include'
       });
 
       if (!response.ok) {
-        console.error(`${langContext} Error fetching ICE candidates: ${response.status}`);
+        if (response.status !== 404) { // 404 is normal when no candidates yet
+          console.error(`${langContext} 🔍 GUIDE ICE POLLING: Error fetching ICE candidates: ${response.status}`);
+        }
         return;
       }
 
       const data = await response.json();
       const candidates = data.candidates || [];
 
+      console.log(`${langContext} 🔍 GUIDE ICE POLLING: Response from attendee ${attendeeId}: ${candidates.length} total candidates, lastProcessed: ${lastProcessedIndex}`);
+
       // Process only new candidates
       if (candidates.length > lastProcessedIndex + 1) {
         const newCandidates = candidates.slice(lastProcessedIndex + 1);
-        console.log(`${langContext} Found ${newCandidates.length} new ICE candidates from attendee ${attendeeId}`);
+        console.log(`${langContext} 🔍 GUIDE ICE POLLING: ✅ Found ${newCandidates.length} NEW ICE candidates from attendee ${attendeeId}`);
 
         // Add each candidate to the peer connection
         for (const candidate of newCandidates) {
-          await attendeePC.addIceCandidate(new RTCIceCandidate(candidate));
+          try {
+            // CRITICAL FIX: Validate ICE candidate before adding
+            if (!candidate || !candidate.candidate) {
+              console.warn(`${langContext} 🔍 GUIDE ICE POLLING: ❌ Skipping invalid ICE candidate from attendee ${attendeeId}: missing candidate string`);
+              continue;
+            }
+            
+            // Additional validation for critical fields
+            if (candidate.sdpMLineIndex === undefined && candidate.sdpMid === undefined) {
+              console.warn(`${langContext} 🔍 GUIDE ICE POLLING: ❌ Skipping invalid ICE candidate from attendee ${attendeeId}: missing sdpMLineIndex and sdpMid`);
+              continue;
+            }
+            
+            await attendeePC.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log(`${langContext} 🔍 GUIDE ICE POLLING: ✅ Added ICE candidate from attendee ${attendeeId}`);
+            console.log(`${langContext} 🔍 GUIDE ICE POLLING: Candidate details - Type: ${candidate.type || 'unknown'}, Protocol: ${candidate.protocol || 'unknown'}, Priority: ${candidate.priority || 'unknown'}`);
+          } catch (error) {
+            console.error(`${langContext} 🔍 GUIDE ICE POLLING: ❌ Failed to add ICE candidate from attendee ${attendeeId}:`, error);
+            console.error(`${langContext} 🔍 GUIDE ICE POLLING: ❌ Problem candidate:`, candidate);
+          }
         }
 
         // Update the last processed index
         lastProcessedIndex = candidates.length - 1;
+      } else {
+        // Only log this occasionally to avoid spam
+        if (Math.random() < 0.1) { // 10% chance to log
+          console.log(`${langContext} 🔍 GUIDE ICE POLLING: No new candidates from attendee ${attendeeId} (${candidates.length} total, ${lastProcessedIndex + 1} processed)`);
+        }
       }
     } catch (error) {
       console.error(`${langContext} Error polling for ICE candidates:`, error);
@@ -1237,19 +2060,84 @@ async function sendIceCandidateToAttendee(
   const langContext = `[${language}]`;
 
   try {
-    await fetch('/api/tour/ice-candidate', {
+    console.log(`${langContext} [GUIDE-ICE-SEND] Sending ICE candidate to attendee ${attendeeId}: ${candidate.candidate.substring(0, 80)}...`);
+    console.log(`${langContext} [GUIDE-ICE-SEND] Candidate details - Type: ${candidate.type}, Protocol: ${candidate.protocol}, Priority: ${candidate.priority}`);
+
+    let webSocketSuccess = false;
+
+    // Try WebSocket first with retry mechanism
+    const connection = openAIConnectionsByLanguage.get(language);
+    if (connection?.signalingClient) {
+      let retries = 0;
+      const maxRetries = 3;
+      
+      while (retries < maxRetries) {
+        const success = await connection.signalingClient.sendIceCandidate(candidate, attendeeId);
+        if (success) {
+          console.log(`${langContext} [GUIDE-ICE-SEND] ✅ ICE candidate sent via WebSocket to attendee ${attendeeId} (attempt ${retries + 1})`);
+          webSocketSuccess = true;
+          break;
+        } else {
+          retries++;
+          console.warn(`${langContext} [GUIDE-ICE-SEND] WebSocket send failed (attempt ${retries}/${maxRetries})`);
+          if (retries < maxRetries) {
+            // Brief delay before retry
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+      }
+      if (!webSocketSuccess) {
+        console.warn(`${langContext} [GUIDE-ICE-SEND] All WebSocket attempts failed`);
+      }
+    }
+
+    // CRITICAL FIX: Always store in Redis for HTTP polling fallback
+    // Even if WebSocket succeeds, attendees may still poll via HTTP
+    console.log(`${langContext} [GUIDE-ICE-SEND] Storing ICE candidate in Redis for HTTP polling fallback...`);
+    
+    // CRITICAL FIX: Properly serialize ICE candidate with all required fields
+    const candidateData = {
+      candidate: candidate.candidate,
+      sdpMLineIndex: candidate.sdpMLineIndex,
+      sdpMid: candidate.sdpMid,
+      usernameFragment: candidate.usernameFragment,
+      // Preserve critical diagnostic fields
+      type: candidate.type,
+      protocol: candidate.protocol,
+      priority: candidate.priority,
+      address: candidate.address,
+      port: candidate.port
+    };
+    
+    const response = await fetch('/api/tour/ice-candidate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         language,
         attendeeId,
         tourId,
-        candidate
+        candidate: candidateData,
+        sender: 'guide'
       }),
       credentials: 'include'
     });
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log(`${langContext} [GUIDE-ICE-SEND] ✅ ICE candidate stored in Redis: ${data.candidateNumber} total candidates (key: ${data.redisKey})`);
+      
+      if (webSocketSuccess) {
+        console.log(`${langContext} [GUIDE-ICE-SEND] 🎯 Dual delivery complete: WebSocket ✅ + Redis ✅`);
+      } else {
+        console.log(`${langContext} [GUIDE-ICE-SEND] 📦 HTTP/Redis-only delivery complete`);
+      }
+    } else {
+      console.error(`${langContext} [GUIDE-ICE-SEND] ❌ Failed to store ICE candidate in Redis: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`${langContext} [GUIDE-ICE-SEND] Error details:`, errorText);
+    }
   } catch (error) {
-    console.error(`${langContext} Error sending ICE candidate to attendee ${attendeeId}:`, error);
+    console.error(`${langContext} [GUIDE-ICE-SEND] ❌ Error sending ICE candidate to attendee ${attendeeId}:`, error);
   }
 }
 
@@ -1298,6 +2186,11 @@ function cleanupAttendeeConnection(
     return;
   }
 
+  // Stop ICE monitoring
+  if (connection.iceMonitor) {
+    connection.iceMonitor.stopMonitoring();
+  }
+
   // Close data channel if open
   if (connection.dc.readyState === 'open') {
     connection.dc.close();
@@ -1310,6 +2203,10 @@ function cleanupAttendeeConnection(
 
   // Remove from tracked connections
   attendeeConnections.delete(attendeeId);
+
+  // Update guide's audio state - unmute if no more attendees
+  updateGuideAudioState(language);
+  console.log(`${langContext} Updated guide audio state after attendee ${attendeeId} disconnected`);
 }
 
 

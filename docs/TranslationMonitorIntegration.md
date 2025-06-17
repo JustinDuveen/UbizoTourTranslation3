@@ -81,6 +81,22 @@ function GuideControls() {
 }
 ```
 
+## Enabling and Disabling the Monitor
+
+The Translation Monitor is designed to be inactive by default, even in development environments, to prevent accidental activation. To enable it:
+
+1.  **Production Environments**: The monitor is **always disabled** in production environments (`process.env.NODE_ENV === 'production'`) and cannot be activated.
+2.  **Development/Other Environments**:
+    *   The monitor will only activate if `process.env.NODE_ENV !== 'production'`.
+    *   **AND** you explicitly enable it by setting the environment variable `NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR` to `'true'`.
+    *   You can do this by creating or modifying a `.env.local` file in the root of your project and adding the line:
+        ```
+        NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR=true
+        ```
+    *   Remember to restart your development server after changing environment variables.
+
+If `NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR` is not set to `'true'`, or if you are in a production environment, the monitor integration functions will log messages indicating why they are skipped and will not initialize or affect the application.
+
 ## Removal Process
 
 When you no longer need the Translation Monitor:

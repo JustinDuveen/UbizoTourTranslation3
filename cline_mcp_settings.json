@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "github.com/modelcontextprotocol/servers/tree/main/src/filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "c:/Users/justi/OneDrive/Documents/claude/ubizo"
+      ]
+    },
+    "github.com/AgentDeskAI/browser-tools-mcp": {
+      "command": "npx",
+      "args": [
+        "@agentdeskai/browser-tools-mcp@latest"
+      ],
+      "disabled": false,
+      "autoApprove": []
+    },
+    "github.com/upstash/context7-mcp": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ],
+      "disabled": false,
+      "autoApprove": []
+    },
+    "github.com/alexander-zuev/supabase-mcp-server": {
+      "command": "C:\\Users\\justi\\AppData\\Roaming\\Python\\Python313\\Scripts\\supabase-mcp-server.exe",
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

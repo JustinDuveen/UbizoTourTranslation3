@@ -1,0 +1,68 @@
+{
+  "timestamp": "2025-06-09T14:29:00.519Z",
+  "tests": [
+    {
+      "name": "Application Health Check",
+      "status": "PASS",
+      "details": {
+        "status": 200,
+        "contentLength": 5325
+      },
+      "timestamp": "2025-06-09T14:29:00.841Z"
+    },
+    {
+      "name": "API Endpoint /api/auth/check",
+      "status": "PASS",
+      "details": {
+        "status": 401
+      },
+      "timestamp": "2025-06-09T14:29:04.893Z"
+    },
+    {
+      "name": "API Endpoint /api/session",
+      "status": "PASS",
+      "details": {
+        "status": 401
+      },
+      "timestamp": "2025-06-09T14:29:11.195Z"
+    },
+    {
+      "name": "API Endpoint /api/tour/languages",
+      "status": "PASS",
+      "details": {
+        "status": 401
+      },
+      "timestamp": "2025-06-09T14:29:13.701Z"
+    },
+    {
+      "name": "WebSocket Endpoint Available",
+      "status": "PASS",
+      "details": {
+        "status": 400,
+        "hasSocketIO": false
+      },
+      "timestamp": "2025-06-09T14:29:13.711Z"
+    },
+    {
+      "name": "Page /guide",
+      "status": "FAIL",
+      "details": {
+        "error": "HTTP 307"
+      },
+      "timestamp": "2025-06-09T14:29:15.777Z"
+    },
+    {
+      "name": "Page /attendee",
+      "status": "FAIL",
+      "details": {
+        "error": "HTTP 307"
+      },
+      "timestamp": "2025-06-09T14:29:15.853Z"
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "passed": 5,
+    "failed": 2
+  }
+}
