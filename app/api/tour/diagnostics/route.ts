@@ -67,8 +67,7 @@ export async function GET(request: Request) {
     console.log(`🔍 [DIAGNOSTICS-API] Starting connection diagnosis for tour ${tourId}, language ${language} (normalized: ${normalizedLanguage})`);
 
     // Check all Redis keys
-    const redisKeys = await checkRedisKeys(redis, tourId, normalizedLanguage, attendeeId);
-
+    const redisKeys = await checkRedisKeys(redis, tourId, normalizedLanguage, attendeeId ?? undefined);
     // Analyze offer availability
     if (!redisKeys.offer.exists) {
       issues.push('No WebRTC offer found - guide has not started broadcasting');
@@ -160,8 +159,7 @@ export async function POST(request: Request) {
     console.log(`🔧 [REPAIR-API] Starting connection repair for tour ${tourId}, language ${language}`);
 
     // First run diagnostics to identify issues
-    const redisKeys = await checkRedisKeys(redis, tourId, normalizedLanguage, attendeeId);
-
+    const redisKeys = await checkRedisKeys(redis, tourId, normalizedLanguage, attendeeId ?? undefined);
     // Repair 1: Clean up stale data
     if (redisKeys.answers.count > 0 && redisKeys.iceGuide.count === 0) {
       console.log(`🔧 [REPAIR-API] Found answers but no guide ICE candidates - cleaning up stale answers`);
