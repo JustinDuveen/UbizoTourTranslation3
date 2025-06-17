@@ -205,18 +205,22 @@ export async function POST(request: Request) {
  * GET endpoint for attendees to retrieve the guide's WebRTC offer.
  */
 export async function GET(request: Request) {
+  // Extract parameters outside try block for catch block access
+  const { searchParams } = new URL(request.url);
+  const languageParam = searchParams.get("language");
+  const tourCode = searchParams.get("tourCode");
+  const attendeeName = searchParams.get("attendeeName");
+
+  // Declare variables that might be referenced in catch block
+  let tourId: string | null = null;
+  let offer: any = null;
+
   try {
     // Authenticate the attendee
     const user = getUserFromHeaders();
     if (!user || user.role !== "attendee") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    // Extract and validate parameters
-    const { searchParams } = new URL(request.url);
-    const languageParam = searchParams.get("language");
-    const tourCode = searchParams.get("tourCode");
-    const attendeeName = searchParams.get("attendeeName");
 
     if (!languageParam || !tourCode) {
       return NextResponse.json({ error: "Missing required parameters" }, { status: 400 });
@@ -231,7 +235,6 @@ export async function GET(request: Request) {
     const redis = await getRedisClient();
 
     // Get the tourId from the tour code with retry logic
-    let tourId = null;
     let retryCount = 0;
     const maxRetries = 3;
 
@@ -314,7 +317,6 @@ export async function GET(request: Request) {
     }
 
     // Parse and validate the offer
-    let offer;
     try {
       offer = JSON.parse(offerJson);
       console.log(`[ATTENDEE] Parsed offer type: ${typeof offer}`);

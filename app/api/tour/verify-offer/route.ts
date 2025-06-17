@@ -54,17 +54,17 @@ function validateSdpOffer(offer: any): { isValid: boolean; error?: string } {
  * GET endpoint for guides to verify their WebRTC offer was stored correctly.
  */
 export async function GET(request: Request) {
+  // Extract parameters outside try block for catch block access
+  const { searchParams } = new URL(request.url);
+  const languageParam = searchParams.get("language");
+  const tourId = searchParams.get("tourId");
+
   try {
     // Authenticate the guide
     const user = getUserFromHeaders();
     if (!user || user.role !== "guide") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    // Extract and validate parameters
-    const { searchParams } = new URL(request.url);
-    const languageParam = searchParams.get("language");
-    const tourId = searchParams.get("tourId");
 
     if (!languageParam || !tourId) {
       return NextResponse.json({ error: "Missing required parameters" }, { status: 400 });
