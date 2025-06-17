@@ -280,7 +280,7 @@ export async function GET(request: Request) {
     console.log(`Attendee counts: ${JSON.stringify(attendeeCounts)}`)
 
     // Format languages for display
-    const displayLanguages = languages.map(lang => ({
+    const displayLanguages = languages.map((lang: string) => ({
       code: lang,
       display: formatLanguageForDisplay(lang)
     }))
