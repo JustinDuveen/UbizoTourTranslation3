@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRedisClient } from "@/lib/redis";
+import getRedisClient from "@/lib/redis";
 
 // Simple cache for ICE candidates to reduce Redis calls
 const iceCache = new Map<string, { candidates: any[], totalCount: number, timestamp: number }>();
@@ -59,8 +59,8 @@ export async function GET(request: Request) {
 
     // Get total length and fetch candidates in one go
     const [totalCandidates, candidatesStrings] = await Promise.all([
-      redisClient.lLen(redisKey),
-      redisClient.lRange(redisKey, lastKnownIndex + 1, -1)
+      redisClient.llen(redisKey),
+      redisClient.lrange(redisKey, lastKnownIndex + 1, -1)
     ]);
 
     const candidates = candidatesStrings.map((c: string) => JSON.parse(c));

@@ -5,15 +5,19 @@ import NextAuth from "next-auth"
 
 const handler = NextAuth({
   // ... your NextAuth configuration
+  providers: [
+    // Add your authentication providers here
+    // Example: GoogleProvider, CredentialsProvider, etc.
+  ],
 
   events: {
     async signIn({ user }) {
-      await redisClient.connect()
-      await redisClient.set(`user:${user.id}`, JSON.stringify(user))
+      const redis = await redisClient()
+      await redis.set(`user:${user.id}`, JSON.stringify(user))
     },
     async signOut({ token }) {
-      await redisClient.connect()
-      await redisClient.del(`user:${token.sub}`)
+      const redis = await redisClient()
+      await redis.del(`user:${token.sub}`)
     },
   },
 })

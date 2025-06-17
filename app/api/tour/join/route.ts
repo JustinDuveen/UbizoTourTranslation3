@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRedisClient } from "@/lib/redis";
+import getRedisClient from "@/lib/redis";
 
 async function validateTour(redisClient: any, tourId: string): Promise<boolean> {
   console.log(`Validating tour ${tourId}...`);
@@ -110,7 +110,7 @@ export async function GET(request: Request) {
 
     // Validate language support
     console.log(`Checking if language ${language} is supported for tour ${tourId}`);
-    const isSupported = await redisClient.sIsMember(
+    const isSupported = await redisClient.sismember(
       `tour:${tourId}:supported_languages`,
       language
     );

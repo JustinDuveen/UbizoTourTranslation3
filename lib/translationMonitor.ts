@@ -709,7 +709,7 @@ function toggleMinimize(): void {
   }
 
   state.isMinimized = !state.isMinimized;
-  const contentContainer = elements.container.querySelector('#monitor-content');
+  const contentContainer = elements.container.querySelector('#monitor-content') as HTMLElement;
 
   if (!contentContainer) {
     console.warn('[TranslationMonitor] Content container not found');
@@ -724,7 +724,7 @@ function toggleMinimize(): void {
     contentContainer.style.pointerEvents = 'none';
 
     // Update minimize button
-    const minimizeButton = elements.container.querySelector('button[title="Minimize"]');
+    const minimizeButton = elements.container.querySelector('button[title="Minimize"]') as HTMLElement;
     if (minimizeButton) {
       minimizeButton.textContent = '+';
       minimizeButton.title = 'Expand';
@@ -737,7 +737,7 @@ function toggleMinimize(): void {
     contentContainer.style.pointerEvents = 'auto';
 
     // Update minimize button
-    const minimizeButton = elements.container.querySelector('button[title="Expand"]');
+    const minimizeButton = elements.container.querySelector('button[title="Expand"]') as HTMLElement;
     if (minimizeButton) {
       minimizeButton.textContent = '−';
       minimizeButton.title = 'Minimize';

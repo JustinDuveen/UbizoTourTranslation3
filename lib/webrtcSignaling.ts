@@ -16,6 +16,16 @@ interface ICECandidate {
   sdpMid: string;
 }
 
+interface HealthMetrics {
+  messagesReceived: number;
+  messagesSent: number;
+  reconnections: number;
+  avgLatency: number;
+  packetLoss: number;
+  startTime: number;
+  uptime: number;
+}
+
 class WebRTCSignalingClient {
   private socket: Socket | null = null;
   private tourId: string = '';
@@ -219,12 +229,11 @@ class WebRTCSignalingClient {
     });
 
     // Track all received messages for health metrics
-    const originalOnevent = this.socket.onevent;
-    this.socket.onevent = (packet) => {
+    // Note: onevent is private in Socket.IO v4+, so we'll track messages through event handlers
+    this.socket.onAny(() => {
       this.healthMetrics.messagesReceived++;
       this.updateConnectionQuality();
-      return originalOnevent.call(this.socket, packet);
-    };
+    });
   }
 
   /**
@@ -486,7 +495,7 @@ class WebRTCSignalingClient {
     latency: number;
     uptime: number;
     connected: boolean;
-    metrics: typeof this.healthMetrics;
+    metrics: HealthMetrics;
   } {
     return {
       quality: this.connectionQuality,
@@ -648,18 +657,6 @@ class WebRTCSignalingClient {
     };
   }
 
-  /**
-   * Disconnect and cleanup
-   */
-  disconnect(): void {
-    if (this.socket) {
-      console.log(`[${this.language}] Disconnecting WebSocket signaling`);
-      this.socket.disconnect();
-      this.socket = null;
-      this.isConnected = false;
-      this.reconnectAttempts = 0;
-    }
-  }
 }
 
 // Singleton instance for the application

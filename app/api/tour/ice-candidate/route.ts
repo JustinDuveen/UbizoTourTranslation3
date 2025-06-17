@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRedisClient } from "@/lib/redis";
+import getRedisClient from "@/lib/redis";
 
 export async function POST(request: Request) {
   const { tourId, language, candidate, attendeeId, sender } = await request.json();
@@ -29,12 +29,12 @@ export async function POST(request: Request) {
 
   try {
     // Store the candidate object in a Redis list
-    await redisClient.rPush(redisKey, JSON.stringify(candidate));
+    await redisClient.rpush(redisKey, JSON.stringify(candidate));
     // Optional: Set an expiry for the list if candidates are not needed indefinitely
     // await redisClient.expire(redisKey, 3600); // Expires in 1 hour
 
     // Enhanced logging for debugging ICE candidate delivery
-    const listLength = await redisClient.lLen(redisKey);
+    const listLength = await redisClient.llen(redisKey);
     console.log(`🔥 CRITICAL: Stored ICE candidate #${listLength} for ${sender} to ${redisKey}`);
     console.log(`🔥 Candidate details: ${candidate.candidate ? candidate.candidate.substring(0,80) + '...' : 'empty candidate'}`);
     console.log(`🔥 Redis key: ${redisKey}`);

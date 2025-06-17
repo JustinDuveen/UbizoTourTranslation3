@@ -49,13 +49,13 @@ export async function POST(request: Request) {
 
     // Check if language already supported
     const supportedLanguagesKey = getSupportedLanguagesKey(tourId)
-    const isSupported = await redis.sIsMember(supportedLanguagesKey, normalizedLang)
+    const isSupported = await redis.sismember(supportedLanguagesKey, normalizedLang)
     if (isSupported) {
       return NextResponse.json({ error: "Language already supported" }, { status: 400 })
     }
 
     // Add language to supported set
-    await redis.sAdd(supportedLanguagesKey, normalizedLang)
+    await redis.sadd(supportedLanguagesKey, normalizedLang)
 
     // Initialize offer for new language
     const offerKey = getOfferKey(tourId, normalizedLang)
@@ -110,7 +110,7 @@ export async function DELETE(request: Request) {
 
     // Check if language exists and is not primary
     const supportedLanguagesKey = getSupportedLanguagesKey(tourId)
-    const isSupported = await redis.sIsMember(supportedLanguagesKey, normalizedLang)
+    const isSupported = await redis.sismember(supportedLanguagesKey, normalizedLang)
     if (!isSupported) {
       return NextResponse.json({ error: "Language not found" }, { status: 404 })
     }
@@ -124,7 +124,7 @@ export async function DELETE(request: Request) {
     }
 
     // Remove language from supported set
-    await redis.sRem(supportedLanguagesKey, normalizedLang)
+    await redis.srem(supportedLanguagesKey, normalizedLang)
 
     // Remove language offer
     const offerKey = getOfferKey(tourId, normalizedLang)
@@ -139,7 +139,7 @@ export async function DELETE(request: Request) {
 
     // Get attendees using this language
     const languageAttendeesKey = getLanguageAttendeesKey(tourId, normalizedLang)
-    const attendees = await redis.sMembers(languageAttendeesKey)
+    const attendees = await redis.smembers(languageAttendeesKey)
 
     // Publish language removed event
     await redis.publish(`tour:${tourId}:events`, JSON.stringify({
@@ -221,7 +221,7 @@ export async function GET(request: Request) {
     // Get supported languages
     console.log(`Getting supported languages for tour: ${tourId}`)
     const supportedLanguagesKey = getSupportedLanguagesKey(tourId)
-    const languages = await redis.sMembers(supportedLanguagesKey)
+    const languages = await redis.smembers(supportedLanguagesKey)
     console.log(`Supported languages from Redis set: ${JSON.stringify(languages)}`)
 
     // Log the Redis key for debugging
@@ -243,10 +243,10 @@ export async function GET(request: Request) {
             console.log(`Adding missing languages to set: ${JSON.stringify(parsedTourInfo.languages)}`)
             console.log(`Adding languages to set using spread syntax: ${JSON.stringify(parsedTourInfo.languages)}`)
             // Use spread syntax to ensure each language is added as a separate element
-            await redis.sAdd(`tour:${tourId}:supported_languages`, ...parsedTourInfo.languages)
+            await redis.sadd(`tour:${tourId}:supported_languages`, ...parsedTourInfo.languages)
 
             // Get the updated languages
-            const updatedLanguages = await redis.sMembers(`tour:${tourId}:supported_languages`)
+            const updatedLanguages = await redis.smembers(`tour:${tourId}:supported_languages`)
             console.log(`Updated supported languages: ${JSON.stringify(updatedLanguages)}`)
             // Replace the languages array with the updated one
             languages.length = 0; // Clear the array
@@ -269,7 +269,7 @@ export async function GET(request: Request) {
     const attendeeCounts = await Promise.all(
       languages.map(async (lang: string) => {
         const languageAttendeesKey = getLanguageAttendeesKey(tourId, lang)
-        const count = await redis.sCard(languageAttendeesKey)
+        const count = await redis.scard(languageAttendeesKey)
         return {
           language: lang,
           displayLanguage: formatLanguageForDisplay(lang),

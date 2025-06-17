@@ -363,7 +363,7 @@ export async function GET(request: Request) {
         console.log(`[ATTENDEE] Registering attendee ${attendeeName} at key: ${attendeeKey}`);
 
         // Add to the set of attendees for this language
-        await redis.sAdd(attendeeKey, attendeeName);
+        await redis.sadd(attendeeKey, attendeeName);
 
         // Set expiry on the attendee key if it doesn't exist
         const ttl = await redis.ttl(attendeeKey);

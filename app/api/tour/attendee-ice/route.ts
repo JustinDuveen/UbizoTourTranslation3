@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { verifyToken } from "@/lib/auth";
-import { getRedisClient } from "@/lib/redis";
+import getRedisClient from "@/lib/redis";
 
 // GET endpoint for guides to retrieve a specific attendee's ICE candidates
 export async function GET(request: Request) {
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
     }
 
     // Fetch candidates from the list starting after lastKnownIndex
-    const candidatesStrings = await redisClient.lRange(redisKey, lastKnownIndex + 1, -1);
+    const candidatesStrings = await redisClient.lrange(redisKey, lastKnownIndex + 1, -1);
 
     const candidates = candidatesStrings.map((c: string) => JSON.parse(c));
 

@@ -185,6 +185,8 @@ export async function initWebRTC(options: WebRTCOptions) {
     if (signalingClient) {
       console.log(`${langContext} Setting up WebSocket handlers for real-time signaling...`);
       
+      let receivedCandidateCount = 0;
+      
       // Handle incoming ICE candidates from guide via WebSocket
       signalingClient.onIceCandidate((candidate: any) => {
         receivedCandidateCount++;
@@ -383,7 +385,6 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
   }
 
   // Enhanced ICE monitoring for attendee
-  let receivedCandidateCount = 0;
   
   // Monitor ICE gathering state changes
   pc.onicegatheringstatechange = () => {

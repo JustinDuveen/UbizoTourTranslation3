@@ -1,18 +1,34 @@
-// lib/redis.js
-import { createClient } from "redis"
+// lib/redis.ts - Railway-optimized Redis client using ioredis
+import Redis from "ioredis"
 
 // Initialize connection state and client
 let isConnected = false
-let client: any = null
-let connectionPromise: Promise<any> | null = null
+let client: Redis | null = null
+let connectionPromise: Promise<Redis> | null = null
+
+// Helper function to parse Railway Redis URL
+function parseRedisUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return {
+      host: parsed.hostname,
+      port: parseInt(parsed.port) || 6379,
+      password: parsed.password || undefined,
+      username: parsed.username || undefined
+    };
+  } catch (error) {
+    console.error('Failed to parse Redis URL:', error);
+    return {};
+  }
+}
 
 // Function to get connected client with improved connection management
-export async function getRedisClient() {
+export async function getRedisClient(): Promise<Redis> {
   // If we already have a connected client, return it immediately
   if (client && isConnected) {
     try {
       // Quick connection check without ping to reduce latency
-      if (client.isReady) {
+      if (client.status === 'ready') {
         return client;
       }
     } catch (error) {
@@ -37,23 +53,33 @@ export async function getRedisClient() {
       connectionPromise = null;
     }
   }
-  return client;
+  return client!; // We know client is not null here
 }
 
-async function connectToRedis() {
+async function connectToRedis(): Promise<Redis> {
   try {
-    const newClient = createClient({
-      url: `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
-      password: process.env.REDIS_PASSWORD || undefined,
-      socket: {
-        reconnectStrategy: (retries) => {
-          // Faster reconnection for development
-          return Math.min(retries * 50, 5000);
-        },
-        connectTimeout: 5000,
-        lazyConnect: true
-      }
-    })
+    // Railway Redis configuration - supports both URL and individual params
+    const redisConfig: any = process.env.REDIS_URL
+      ? parseRedisUrl(process.env.REDIS_URL)
+      : {
+          host: process.env.REDIS_HOST || "localhost",
+          port: parseInt(process.env.REDIS_PORT || "6379"),
+          password: process.env.REDIS_PASSWORD || undefined
+        };
+
+    const newClient = new Redis({
+      ...redisConfig,
+      // Railway-optimized settings
+      retryDelayOnFailover: 100,
+      maxRetriesPerRequest: 3,
+      connectTimeout: 5000,
+      lazyConnect: true,
+      // Faster reconnection for Railway
+      retryDelayOnClusterDown: 300,
+      retryDelayAfter: 100,
+      // Keep connection alive
+      keepAlive: 30000
+    });
 
     // Reduce logging noise in development
     newClient.on("error", (err: Error) => {
@@ -71,7 +97,8 @@ async function connectToRedis() {
       }
     });
 
-    await newClient.connect();
+    // ioredis connects automatically, but we can force connection
+    await newClient.ping();
     isConnected = true;
     client = newClient;
 
@@ -103,7 +130,7 @@ export type RedisTransactionOperation = [string, ...any[]]
 export interface RedisTransactionOptions {
   maxRetries?: number
   logPrefix?: string
-  validateResults?: (results: any[]) => boolean
+  validateResults?: (results: [Error | null, unknown][]) => boolean
 }
 
 /**
@@ -116,7 +143,7 @@ export interface RedisTransactionOptions {
 export async function executeRedisTransaction(
   operations: RedisTransactionOperation[],
   options: RedisTransactionOptions = {}
-): Promise<any[]> {
+): Promise<[Error | null, unknown][]> {
   const {
     maxRetries = 3,
     logPrefix = '[REDIS]',
@@ -147,31 +174,32 @@ export async function executeRedisTransaction(
       for (const [command, ...args] of operations) {
         const cmd = command.toLowerCase();
         try {
-          // Use direct method calls instead of bracket notation
+          // ioredis method calls - cast to any to bypass TypeScript spread restrictions
+          const redisMulti = multi as any;
           switch (cmd) {
             case 'get':
-              multi.get(...args);
+              redisMulti.get(args[0]);
               break;
             case 'set':
-              multi.set(...args);
+              redisMulti.set(args[0], args[1], ...args.slice(2));
               break;
             case 'del':
-              multi.del(...args);
+              redisMulti.del(...args);
               break;
             case 'srem':
-              multi.sRem(...args);
+              redisMulti.srem(args[0], ...args.slice(1)); // ioredis uses lowercase
               break;
             case 'sadd':
-              multi.sAdd(...args);
+              redisMulti.sadd(args[0], ...args.slice(1)); // ioredis uses lowercase
               break;
             case 'exists':
-              multi.exists(...args);
+              redisMulti.exists(...args);
               break;
             case 'expire':
-              multi.expire(...args);
+              redisMulti.expire(args[0], args[1]);
               break;
             case 'ttl':
-              multi.ttl(...args);
+              redisMulti.ttl(args[0]);
               break;
             default:
               console.error(`${logPrefix} Unsupported Redis command: ${command}`);
@@ -186,6 +214,11 @@ export async function executeRedisTransaction(
 
       // Execute the transaction
       const results = await multi.exec()
+
+      // Check if results is null (transaction failed)
+      if (!results) {
+        throw new Error(`Transaction execution failed - results is null`)
+      }
 
       // Validate the results
       if (!validateResults(results)) {
@@ -259,17 +292,18 @@ export function validateTransactionOperations(operations: RedisTransactionOperat
  * @param expectedLength Expected number of results
  * @returns True if results are valid, false otherwise
  */
-export function validateTransactionResults(results: any[], expectedLength: number): boolean {
+export function validateTransactionResults(results: [Error | null, unknown][], expectedLength: number): boolean {
   // Check if we have the expected number of results
   if (!results || !Array.isArray(results) || results.length !== expectedLength) {
     console.error(`[REDIS] Invalid transaction results: expected ${expectedLength} results, got ${results?.length || 0}`)
     return false
   }
 
-  // Check if any result is an error
+  // Check if any result is an error (ioredis format: [error, result])
   for (let i = 0; i < results.length; i++) {
-    if (results[i] instanceof Error) {
-      console.error(`[REDIS] Transaction operation ${i} failed:`, results[i])
+    const [error, result] = results[i]
+    if (error) {
+      console.error(`[REDIS] Transaction operation ${i} failed:`, error)
       return false
     }
   }

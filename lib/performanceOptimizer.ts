@@ -362,7 +362,7 @@ export class PerformanceOptimizer {
     // Android-specific optimizations
     if (platform === 'Android') {
       updates.audioBufferSize = 1024; // Android-optimized buffer size
-      updates.batteryOptimization = true;
+      updates.batterySaving = true;
     }
 
     // Network-based optimizations

@@ -73,7 +73,7 @@ export async function GET() {
 
     // Cache the session for future use (with 55 second expiry to ensure we don't use expired keys)
     // OpenAI requires ephemeral keys to expire after 1 minute
-    await redis.set("openai_session", JSON.stringify(data), { EX: 55 })
+    await redis.set("openai_session", JSON.stringify(data), 'EX', 55)
 
     return NextResponse.json(data)
   } catch (error) {

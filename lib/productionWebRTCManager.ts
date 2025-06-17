@@ -575,32 +575,26 @@ export function createProductionWebRTCManager(config: Partial<ProductionWebRTCCo
   participantId: string;
 }): ProductionWebRTCManager {
   const defaultConfig: ProductionWebRTCConfig = {
-    // Required fields from input
-    tourId: config.tourId,
-    language: config.language,
-    role: config.role,
-    participantId: config.participantId,
-    
     // Feature flags - enable all by default for production
     enableSignalingCoordination: true,
     enableConnectionRecovery: true,
     enableQualityMonitoring: true,
     enableGracefulDegradation: true,
     enablePerformanceOptimization: true,
-    
+
     // Quality settings
     initialQualityLevel: QualityLevel.HIGH,
     autoQualityAdaptation: true,
-    
+
     // Recovery settings
     enableAutoRecovery: true,
     maxRecoveryAttempts: 3,
-    
+
     // Monitoring settings
     enableDetailedMetrics: false, // Disable for performance in production
     metricsRetentionTime: 300000, // 5 minutes
-    
-    // Override with provided config
+
+    // Apply provided config (includes required fields: tourId, language, role, participantId)
     ...config
   };
 

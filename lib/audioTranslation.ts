@@ -1,6 +1,6 @@
 // File path: src/lib/audioTranslation.ts (or wherever you keep your utility classes)
 
-import { getRedisClient } from "@/lib/redis";
+import getRedisClient from "@/lib/redis";
 
 interface AudioTranslationData {
   tourId: string;

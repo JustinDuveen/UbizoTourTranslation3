@@ -45,28 +45,36 @@ export async function GET(request: Request) {
     }
 
     // Create SSE stream
+    let subscriber: any = null;
     const stream = new ReadableStream({
       async start(controller) {
         // Subscribe to tour events
-        const subscriber = await getRedisClient();
-        await subscriber.subscribe(`tour:${tourId}:events`, (message: string) => {
-          try {
-            const event = JSON.parse(message);
-            controller.enqueue(createSSEMessage(event));
-          } catch (error) {
-            console.error('Error processing event:', error);
+        subscriber = await getRedisClient();
+
+        // Set up message listener
+        subscriber.on('message', (channel: string, message: string) => {
+          if (channel === `tour:${tourId}:events`) {
+            try {
+              const event = JSON.parse(message);
+              controller.enqueue(createSSEMessage(event));
+            } catch (error) {
+              console.error('Error processing event:', error);
+            }
           }
         });
+
+        // Subscribe to the channel
+        await subscriber.subscribe(`tour:${tourId}:events`);
 
         // Send initial event
         controller.enqueue(createSSEMessage({ type: 'connected' }));
       },
       cancel() {
         // Cleanup subscription
-        getRedisClient().then(subscriber => {
+        if (subscriber) {
           subscriber.unsubscribe(`tour:${tourId}:events`);
           subscriber.quit();
-        });
+        }
       }
     });
 

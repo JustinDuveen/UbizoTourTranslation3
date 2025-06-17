@@ -9,7 +9,9 @@
       "Bash(curl:*)",
       "Bash(docker-compose build:*)",
       "Bash(docker compose:*)",
-      "Bash(./run-tests.sh:*)"
+      "Bash(./run-tests.sh:*)",
+      "Bash(find:*)",
+      "Bash(npm run build:*)"
     ],
     "deny": []
   }

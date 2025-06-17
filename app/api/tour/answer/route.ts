@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRedisClient } from "@/lib/redis";
+import getRedisClient from "@/lib/redis";
 import { normalizeLanguageForStorage, getAnswersKey } from "@/lib/redisKeys";
 
 // Simple in-memory cache for answers to reduce Redis calls
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     // CRITICAL FIX: Use standardized utility function for answer key generation
     const answersKey = getAnswersKey(tourId, language, false); // language already normalized above
     console.log(`[ANSWER-GET] Using answers key: ${answersKey}`);
-    const answers = await redisClient.lRange(answersKey, 0, -1);
+    const answers = await redisClient.lrange(answersKey, 0, -1);
 
     // Update cache
     answerCache.set(cacheKey, { answers, timestamp: now });
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     // CRITICAL FIX: Use standardized utility function for answer key generation
     const answersKey = getAnswersKey(tourId, language, false); // language already normalized above
     console.log(`[ANSWER-POST] Storing answer to key: ${answersKey}`);
-    await redisClient.rPush(answersKey, JSON.stringify(answerData));
+    await redisClient.rpush(answersKey, JSON.stringify(answerData));
 
     // Invalidate cache when new answer is added
     const cacheKey = `${tourId}:${language}`;

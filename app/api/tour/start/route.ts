@@ -63,11 +63,11 @@ export async function POST(request: Request) {
       // Add each language individually to ensure they're all added
       for (const lang of normalizedLanguages) {
         console.log(`Adding language to set: ${lang}`);
-        await redis.sAdd(supportedLanguagesKey, lang);
+        await redis.sadd(supportedLanguagesKey, lang);
       }
 
       // Verify languages were added correctly
-      const storedLanguages = await redis.sMembers(supportedLanguagesKey);
+      const storedLanguages = await redis.smembers(supportedLanguagesKey);
       console.log(`Verified languages in Redis set:`, storedLanguages);
 
       // Check if all languages were added
@@ -77,8 +77,8 @@ export async function POST(request: Request) {
       if (!allAdded) {
         console.log("Some languages were not added, retrying...");
         // Try again with the spread operator
-        await redis.sAdd(supportedLanguagesKey, ...normalizedLanguages);
-        const retryStoredLanguages = await redis.sMembers(supportedLanguagesKey);
+        await redis.sadd(supportedLanguagesKey, ...normalizedLanguages);
+        const retryStoredLanguages = await redis.smembers(supportedLanguagesKey);
         console.log(`After retry, languages in Redis set:`, retryStoredLanguages);
       }
     } catch (error) {

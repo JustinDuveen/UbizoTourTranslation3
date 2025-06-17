@@ -263,7 +263,7 @@ export class ConnectionDiagnostics {
     console.log('\n🔑 REDIS KEY STATUS:');
     Object.entries(diagnostic.redisKeys).forEach(([keyType, keyInfo]) => {
       const status = keyInfo.exists ? '✓' : '✗';
-      const extra = keyInfo.count !== undefined ? ` (${keyInfo.count} items)` : '';
+      const extra = 'count' in keyInfo && keyInfo.count !== undefined ? ` (${keyInfo.count} items)` : '';
       console.log(`  ${status} ${keyType}: ${keyInfo.key}${extra}`);
     });
     

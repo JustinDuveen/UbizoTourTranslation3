@@ -10,13 +10,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { id } = req.query
 
   try {
-    await redisClient.connect()
+    const redis = await redisClient()
 
     // Try to get tour data from Redis cache
-    const cachedTour = await redisClient.get(`tour:${id}`)
+    const cachedTour = await redis.get(`tour:${id}`)
 
     if (cachedTour) {
-      await redisClient.disconnect()
       return res.status(200).json(JSON.parse(cachedTour))
     }
 
@@ -28,11 +27,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Cache the tour data in Redis
-    await redisClient.set(`tour:${id}`, JSON.stringify(tour), {
-      EX: 3600, // Expire after 1 hour
-    })
+    await redis.set(`tour:${id}`, JSON.stringify(tour), "EX", 3600)
 
-    await redisClient.disconnect()
     res.status(200).json(tour)
   } catch (error) {
     console.error("Error:", error)

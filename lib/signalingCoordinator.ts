@@ -3,7 +3,7 @@
  * Manages WebRTC signaling state synchronization via Redis
  */
 
-import { redisClient } from './redis';
+import { getRedisClient } from './redis';
 
 export interface SignalingCoordinationState {
   guideReady: boolean;
@@ -88,6 +88,7 @@ export class SignalingCoordinator {
     console.log(`${context} Initializing signaling coordination...`);
 
     try {
+      const redis = await getRedisClient();
       // Initialize coordination state if it doesn't exist
       const existingState = await this.getCoordinationState();
       if (!existingState) {
@@ -109,7 +110,7 @@ export class SignalingCoordinator {
           }
         };
 
-        await redisClient.setex(
+        await redis.setex(
           this.getCoordinationKey(),
           300, // 5 minutes TTL
           JSON.stringify(initialState)
@@ -126,6 +127,7 @@ export class SignalingCoordinator {
   }
 
   private async registerParticipant(): Promise<void> {
+    const redis = await getRedisClient();
     const participantData = {
       role: this.role,
       connected: true,
@@ -133,7 +135,7 @@ export class SignalingCoordinator {
       iceGatheringComplete: false
     };
 
-    await redisClient.setex(
+    await redis.setex(
       this.getParticipantKey(),
       300, // 5 minutes TTL
       JSON.stringify(participantData)
@@ -142,7 +144,8 @@ export class SignalingCoordinator {
 
   public async getCoordinationState(): Promise<SignalingCoordinationState | null> {
     try {
-      const state = await redisClient.get(this.getCoordinationKey());
+      const redis = await getRedisClient();
+      const state = await redis.get(this.getCoordinationKey());
       return state ? JSON.parse(state) : null;
     } catch (error) {
       console.error('Error getting coordination state:', error);
@@ -154,11 +157,12 @@ export class SignalingCoordinator {
     const context = `[${this.role}:${this.language}:${this.participantId}]`;
 
     try {
+      const redis = await getRedisClient();
       // Use Redis transaction to ensure atomic updates
-      const multi = redisClient.multi();
+      const multi = redis.multi();
 
       // Get current state
-      const currentStateStr = await redisClient.get(this.getCoordinationKey());
+      const currentStateStr = await redis.get(this.getCoordinationKey());
       const currentState: SignalingCoordinationState = currentStateStr 
         ? JSON.parse(currentStateStr)
         : {
@@ -235,13 +239,14 @@ export class SignalingCoordinator {
     };
 
     try {
+      const redis = await getRedisClient();
       // Store candidate with expiration
       const candidateKey = `${this.getICECandidatesKey()}:${candidateMessage.candidateId}`;
-      await redisClient.setex(candidateKey, 120, JSON.stringify(candidateMessage)); // 2 minutes TTL
+      await redis.setex(candidateKey, 120, JSON.stringify(candidateMessage)); // 2 minutes TTL
 
       // Add to candidates list
-      await redisClient.lpush(this.getICECandidatesKey(), candidateMessage.candidateId);
-      await redisClient.expire(this.getICECandidatesKey(), 300); // 5 minutes TTL
+      await redis.lpush(this.getICECandidatesKey(), candidateMessage.candidateId);
+      await redis.expire(this.getICECandidatesKey(), 300); // 5 minutes TTL
 
       console.log(`${context} Buffered ICE candidate #${sequenceNumber} for ${targetId}`);
     } catch (error) {
@@ -252,12 +257,13 @@ export class SignalingCoordinator {
 
   public async getICECandidates(targetId?: string): Promise<ICECandidateMessage[]> {
     try {
-      const candidateIds = await redisClient.lrange(this.getICECandidatesKey(), 0, -1);
+      const redis = await getRedisClient();
+      const candidateIds = await redis.lrange(this.getICECandidatesKey(), 0, -1);
       const candidates: ICECandidateMessage[] = [];
 
       for (const candidateId of candidateIds) {
         const candidateKey = `${this.getICECandidatesKey()}:${candidateId}`;
-        const candidateData = await redisClient.get(candidateKey);
+        const candidateData = await redis.get(candidateKey);
         
         if (candidateData) {
           const candidate: ICECandidateMessage = JSON.parse(candidateData);
@@ -284,14 +290,15 @@ export class SignalingCoordinator {
 
   public async markICECandidateProcessed(candidateId: string): Promise<void> {
     try {
+      const redis = await getRedisClient();
       const candidateKey = `${this.getICECandidatesKey()}:${candidateId}`;
-      const candidateData = await redisClient.get(candidateKey);
+      const candidateData = await redis.get(candidateKey);
       
       if (candidateData) {
         const candidate: ICECandidateMessage = JSON.parse(candidateData);
         candidate.processed = true;
         
-        await redisClient.setex(candidateKey, 120, JSON.stringify(candidate));
+        await redis.setex(candidateKey, 120, JSON.stringify(candidate));
       }
     } catch (error) {
       console.error('Error marking ICE candidate as processed:', error);
@@ -309,12 +316,13 @@ export class SignalingCoordinator {
     };
 
     try {
+      const redis = await getRedisClient();
       const messageKey = `${this.getMessagesKey()}:${fullMessage.messageId}`;
-      await redisClient.setex(messageKey, 300, JSON.stringify(fullMessage)); // 5 minutes TTL
+      await redis.setex(messageKey, 300, JSON.stringify(fullMessage)); // 5 minutes TTL
 
       // Add to messages list
-      await redisClient.lpush(this.getMessagesKey(), fullMessage.messageId);
-      await redisClient.expire(this.getMessagesKey(), 300);
+      await redis.lpush(this.getMessagesKey(), fullMessage.messageId);
+      await redis.expire(this.getMessagesKey(), 300);
 
       // Notify listeners
       const listeners = this.messageListeners.get(message.type) || [];
@@ -330,12 +338,13 @@ export class SignalingCoordinator {
 
   public async getMessages(messageType?: string, limit: number = 50): Promise<SignalingMessage[]> {
     try {
-      const messageIds = await redisClient.lrange(this.getMessagesKey(), 0, limit - 1);
+      const redis = await getRedisClient();
+      const messageIds = await redis.lrange(this.getMessagesKey(), 0, limit - 1);
       const messages: SignalingMessage[] = [];
 
       for (const messageId of messageIds) {
         const messageKey = `${this.getMessagesKey()}:${messageId}`;
-        const messageData = await redisClient.get(messageKey);
+        const messageData = await redis.get(messageKey);
         
         if (messageData) {
           const message: SignalingMessage = JSON.parse(messageData);
@@ -500,6 +509,7 @@ export class SignalingCoordinator {
     }
 
     try {
+      const redis = await getRedisClient();
       // Mark participant as disconnected
       if (this.role === 'guide') {
         await this.updateCoordinationState({
@@ -530,7 +540,7 @@ export class SignalingCoordinator {
       }
 
       // Remove participant key
-      await redisClient.del(this.getParticipantKey());
+      await redis.del(this.getParticipantKey());
     } catch (error) {
       console.error(`${context} Error during cleanup:`, error);
     }

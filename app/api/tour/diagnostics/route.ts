@@ -223,11 +223,11 @@ async function checkRedisKeys(redis: any, tourId: string, normalizedLanguage: st
 
   // Check answers
   const answersExists = await redis.exists(answersKey);
-  const answersCount = answersExists ? await redis.lLen(answersKey) : 0;
+  const answersCount = answersExists ? await redis.llen(answersKey) : 0;
   let answersData = null;
   if (answersExists && answersCount > 0) {
     try {
-      answersData = await redis.lRange(answersKey, 0, -1);
+      answersData = await redis.lrange(answersKey, 0, -1);
     } catch (error) {
       console.error('Error getting answers data:', error);
     }

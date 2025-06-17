@@ -5,6 +5,13 @@
  * including timeout detection, stats analysis, and detailed failure reporting.
  */
 
+interface RTCIceCandidateStats extends RTCStats {
+  candidateType: string;
+  protocol: string;
+  address: string;
+  port: number;
+}
+
 interface ICEStats {
   localCandidates: RTCIceCandidateStats[];
   remoteCandidates: RTCIceCandidateStats[];
@@ -148,50 +155,7 @@ class ICEConnectionMonitor {
     };
   }
 
-  /**
-   * Handle ICE connection timeout
-   */
-  private async handleTimeout(): Promise<void> {
-    if (!this.isMonitoring) return;
 
-    const logContext = this.getLogContext();
-    const duration = Date.now() - this.startTime;
-
-    console.error(`${logContext} ❌ ICE CONNECTION TIMEOUT after ${duration}ms`);
-
-    // Stop monitoring to prevent multiple timeout events
-    this.stopMonitoring();
-
-    try {
-      // Collect comprehensive stats and analysis
-      const stats = await this.collectICEStats();
-      const analysis = this.analyzeICEFailure(stats);
-
-      // Create timeout event
-      const timeoutEvent: ICETimeoutEvent = {
-        timestamp: Date.now(),
-        duration,
-        language: this.language,
-        attendeeId: this.attendeeId,
-        role: this.role,
-        connectionState: this.pc.iceConnectionState,
-        gatheringState: this.pc.iceGatheringState,
-        stats,
-        analysis
-      };
-
-      // Log detailed failure analysis
-      this.logFailureAnalysis(timeoutEvent);
-
-      // Call the timeout callback if provided
-      if (this.onTimeoutCallback) {
-        this.onTimeoutCallback(timeoutEvent);
-      }
-
-    } catch (error) {
-      console.error(`${logContext} Error during timeout analysis:`, error);
-    }
-  }
 
   /**
    * Collect ICE statistics from the peer connection
