@@ -15,8 +15,16 @@ import { createClient } from "@supabase/supabase-js"
  * import { supabase } from '@/lib/supabase'
  */
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// During build time, we might not have access to environment variables
+// Use fallback values to prevent build errors
+const defaultUrl = 'https://placeholder.supabase.co'
+const defaultKey = 'placeholder-key'
+
+export const supabase = createClient(
+  supabaseUrl || defaultUrl,
+  supabaseAnonKey || defaultKey
+)
 

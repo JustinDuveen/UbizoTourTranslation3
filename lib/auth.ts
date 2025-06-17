@@ -30,6 +30,15 @@ export async function createUser(
   password: string,
   role: "guide" | "attendee",
 ): Promise<AuthResult> {
+  // Runtime check for environment variables
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    console.error("Missing Supabase environment variables")
+    return {
+      success: false,
+      error: "Configuration error. Please contact support."
+    }
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -115,6 +124,15 @@ function getAuthErrorMessage(errorMessage: string, status?: number): string {
  * @returns An AuthResult object with success status and user data or error message
  */
 export async function authenticateUser(email: string, password: string): Promise<AuthResult> {
+  // Runtime check for environment variables
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    console.error("Missing Supabase environment variables")
+    return {
+      success: false,
+      error: "Configuration error. Please contact support."
+    }
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
