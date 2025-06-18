@@ -506,35 +506,38 @@ export default function GuidePage() {
             </Card>
             {/* Tour Code Display */}
             {tourCreated && tourCode && (
-              <Card className="bg-gradient-to-r from-green-500/20 to-emerald-500/20 backdrop-blur-sm border-green-500/30">
+              <Card className="bg-gradient-to-br from-amber-500/20 via-orange-500/20 to-yellow-500/20 backdrop-blur-sm border-amber-400/40 shadow-lg shadow-amber-500/10">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-green-400 flex items-center text-lg">
-                    <CheckCircle className="h-5 w-5 mr-2" />
+                  <CardTitle className="text-amber-300 flex items-center text-lg">
+                    <CheckCircle className="h-5 w-5 mr-2 animate-pulse" />
                     Tour Active
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-3">
-                    <p className="text-white/80 text-sm">Share this code with attendees:</p>
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
-                      <div className="flex-1 bg-white/10 rounded-lg p-3 font-mono text-lg sm:text-xl text-center text-white font-bold tracking-wider">
-                        {tourCode}
+                  <div className="space-y-4">
+                    <p className="text-white/90 text-sm font-medium">Share this code with attendees:</p>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center space-y-3 sm:space-y-0 sm:space-x-3">
+                      <div className="relative flex-1">
+                        <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/20 to-blue-400/20 rounded-xl blur-sm"></div>
+                        <div className="relative bg-gradient-to-r from-cyan-500/30 to-blue-500/30 border border-cyan-400/50 rounded-xl p-4 font-mono text-2xl sm:text-3xl text-center text-cyan-100 font-bold tracking-[0.3em] shadow-lg">
+                          {tourCode}
+                        </div>
                       </div>
                       <Button
                         onClick={handleCopyTourCode}
                         variant="outline"
                         size="sm"
-                        className="bg-white/10 border-white/20 text-white hover:bg-white/20 min-h-[44px] sm:min-h-auto"
+                        className="bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border-amber-400/50 text-amber-200 hover:bg-gradient-to-r hover:from-amber-500/30 hover:to-yellow-500/30 hover:border-amber-300/60 min-h-[48px] sm:min-h-auto font-semibold shadow-md"
                       >
                         <Copy className="h-4 w-4 mr-2 sm:mr-0" />
                         <span className="sm:hidden">Copy Code</span>
                       </Button>
                     </div>
                     {copySuccess && (
-                      <p className="text-green-400 text-sm flex items-center">
-                        <CheckCircle className="h-4 w-4 mr-1" />
-                        {copySuccess}
-                      </p>
+                      <div className="flex items-center justify-center p-2 bg-green-500/20 border border-green-400/30 rounded-lg">
+                        <CheckCircle className="h-4 w-4 mr-2 text-green-400" />
+                        <p className="text-green-300 text-sm font-medium">{copySuccess}</p>
+                      </div>
                     )}
                   </div>
                 </CardContent>

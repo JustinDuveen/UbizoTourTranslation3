@@ -1185,6 +1185,9 @@ function startIceCandidatePolling(pc: RTCPeerConnection, language: string, tourI
 
   let lastProcessedIndex = -1;
   let httpCandidateCount = 0;
+  
+  // CRITICAL FIX: Add client-side deduplication tracking
+  const seenCandidates = new Set<string>();
 
   const pollInterval = setInterval(async () => {
     try {
@@ -1228,13 +1231,24 @@ function startIceCandidatePolling(pc: RTCPeerConnection, language: string, tourI
             continue;
           }
           
+          // CRITICAL FIX: Check for duplicate candidates before processing
+          const candidateKey = candidate.candidate;
+          if (seenCandidates.has(candidateKey)) {
+            console.log(`${langContext} [ATTENDEE-ICE-POLL] ⚠️ DUPLICATE SKIPPED: Already processed candidate #${httpCandidateCount}`);
+            console.log(`${langContext} [ATTENDEE-ICE-POLL] Duplicate candidate: ${candidateKey.substring(0, 80)}...`);
+            continue;
+          }
+          
+          // Mark candidate as seen
+          seenCandidates.add(candidateKey);
+          
           // Additional validation for critical fields
           if (candidate.sdpMLineIndex === undefined && candidate.sdpMid === undefined) {
             console.warn(`${langContext} [ATTENDEE-ICE-POLL] ❌ Skipping invalid ICE candidate #${httpCandidateCount}: missing sdpMLineIndex and sdpMid`);
             continue;
           }
 
-          // Enhanced validation and duplicate detection
+          // Enhanced validation
           if (!candidate.candidate || candidate.candidate.trim() === '') {
             console.warn(`${langContext} [ATTENDEE-ICE-POLL] ❌ Skipping empty ICE candidate #${httpCandidateCount}`);
             continue;
@@ -1242,7 +1256,7 @@ function startIceCandidatePolling(pc: RTCPeerConnection, language: string, tourI
           
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            console.log(`${langContext} [ATTENDEE-ICE-POLL] ✅ Added HTTP ICE candidate #${httpCandidateCount} from guide`);
+            console.log(`${langContext} [ATTENDEE-ICE-POLL] ✅ Added NEW ICE candidate #${httpCandidateCount} from guide`);
             console.log(`${langContext} [ATTENDEE-ICE-POLL] Candidate details - Type: ${candidate.type || 'unknown'}, Protocol: ${candidate.protocol || 'unknown'}, Priority: ${candidate.priority || 'unknown'}`);
             console.log(`${langContext} [ATTENDEE-ICE-POLL] Full candidate: ${candidate.candidate.substring(0, 120)}...`);
           } catch (error) {

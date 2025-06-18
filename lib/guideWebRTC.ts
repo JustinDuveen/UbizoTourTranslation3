@@ -1937,19 +1937,39 @@ async function createAttendeeConnection(
           console.log(`${langContext} [GUIDE-ICE] Remote candidates (from attendee): ${remoteCandidates.length}`, remoteCandidates);
           console.log(`${langContext} [GUIDE-ICE] Candidate pairs: ${candidatePairs.length}`, candidatePairs);
 
-          if (localCandidates.length < 4) { // Changed from 2 to 4
-            console.warn(`${langContext} [GUIDE-ICE] ⚠️ Guide only generated ${localCandidates.length} candidates - expected more!`);
-            console.warn(`${langContext} [GUIDE-ICE] 🔄 Forcing ICE restart to generate more candidates...`);
+          // CRITICAL FIX: Add ICE restart tracking to prevent infinite loops
+          const restartTrackingKey = `ice_restart_${attendeeId}`;
+          if (!attendeePC[restartTrackingKey]) {
+            attendeePC[restartTrackingKey] = { attempts: 0, lastAttempt: 0 };
+          }
+          
+          const restartInfo = attendeePC[restartTrackingKey];
+          const now = Date.now();
+          const timeSinceLastRestart = now - restartInfo.lastAttempt;
+          
+          // Only restart if: very few candidates AND connection is actually failing AND not recently restarted
+          if (localCandidates.length < 2 && // Reduced threshold
+              attendeePC.iceConnectionState === 'failed' && // Only on failure, not just low count
+              restartInfo.attempts < 2 && // Maximum 2 restart attempts
+              timeSinceLastRestart > 10000) { // At least 10 seconds between restarts
+              
+            restartInfo.attempts++;
+            restartInfo.lastAttempt = now;
+            
+            console.warn(`${langContext} [GUIDE-ICE] ⚠️ ICE connection failed with only ${localCandidates.length} candidates (attempt ${restartInfo.attempts}/2)`);
+            console.warn(`${langContext} [GUIDE-ICE] 🔄 Forcing ICE restart to recover connection...`);
 
             // Force ICE restart to generate more candidates
             attendeePC.createOffer({ iceRestart: true }).then(offer => {
-              console.log(`${langContext} [GUIDE-ICE] 🔄 ICE restart offer created for attendee ${attendeeId}`);
+              console.log(`${langContext} [GUIDE-ICE] 🔄 ICE restart offer created for attendee ${attendeeId} (attempt ${restartInfo.attempts})`);
               return attendeePC.setLocalDescription(offer);
             }).then(() => {
               console.log(`${langContext} [GUIDE-ICE] ✅ Guide ICE restart initiated for attendee ${attendeeId} - should generate more candidates`);
             }).catch(error => {
               console.error(`${langContext} [GUIDE-ICE] ❌ Guide ICE restart failed for attendee ${attendeeId}:`, error);
             });
+          } else if (localCandidates.length < 4) {
+            console.log(`${langContext} [GUIDE-ICE] ℹ️ Guide has ${localCandidates.length} candidates (restart skipped: attempts=${restartInfo.attempts}, timeSince=${timeSinceLastRestart}ms, state=${attendeePC.iceConnectionState})`);
           }
 
           if (remoteCandidates.length === 0) {
