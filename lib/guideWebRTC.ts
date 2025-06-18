@@ -1518,9 +1518,11 @@ async function processAttendeeAnswer(
           // Let's wait a bit and retry in case the audio stream arrives soon (max 3 retries)
           if (retryCount < 3) {
             console.log(`${langContext} 🔄 No audio stream recovered, waiting 2 seconds then retrying... (attempt ${retryCount + 1}/3)`);
-            setTimeout(async () => {
+            setTimeout(() => {
               console.log(`${langContext} 🔄 Retrying attendee connection after waiting for audio stream... (attempt ${retryCount + 1}/3)`);
-              await processAttendeeAnswer(language, tourId, answerData, retryCount + 1);
+              processAttendeeAnswer(language, tourId, answerData, retryCount + 1).catch(error => {
+                console.error(`${langContext} Error in attendee retry:`, error);
+              });
             }, 2000);
           } else {
             console.error(`${langContext} ❌ Failed to connect attendee after 3 retries - audio stream never became available`);
@@ -1772,28 +1774,27 @@ async function processAttendeeAnswer(
             });
             
             // CRITICAL: Create new offer with audio tracks for renegotiation
-            try {
-              console.log(`${langContext} 🔄 Creating new offer with audio tracks for attendee ${attendeeId}`);
-              const newOffer = await attendeePC.createOffer();
-              await attendeePC.setLocalDescription(newOffer);
-              
-              // Store the new offer so attendee can get it
-              await fetch('/api/tour/offer', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  language,
-                  tourId,
-                  offer: newOffer,
-                  attendeeId, // Specific offer for this attendee
-                  hasAudio: true // Flag that this offer includes audio
-                })
+            console.log(`${langContext} 🔄 Creating new offer with audio tracks for attendee ${attendeeId}`);
+            attendeePC.createOffer().then(newOffer => {
+              return attendeePC.setLocalDescription(newOffer).then(() => {
+                // Store the new offer so attendee can get it
+                return fetch('/api/tour/offer', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    language,
+                    tourId,
+                    offer: newOffer,
+                    attendeeId, // Specific offer for this attendee
+                    hasAudio: true // Flag that this offer includes audio
+                  })
+                });
               });
-              
+            }).then(() => {
               console.log(`${langContext} ✅ New offer with audio tracks stored for attendee ${attendeeId}`);
-            } catch (renegotiationError) {
+            }).catch(renegotiationError => {
               console.error(`${langContext} Failed to renegotiate with audio for attendee ${attendeeId}:`, renegotiationError);
-            }
+            });
             
             // Cleanup and stop retrying
             delete (openAIConnection as any)[audioRetryKey];
@@ -2044,29 +2045,28 @@ async function createAttendeeConnection(
             console.warn(`${langContext} [GUIDE-ICE] ⚠️ ICE connection needs restart: ${localCandidates.length} candidates, state: ${attendeePC.iceConnectionState} (attempt ${restartInfo.attempts}/5, delay: ${adaptiveDelay}ms)`);
             console.warn(`${langContext} [GUIDE-ICE] 🔄 Initiating research-based ICE restart with exponential backoff...`);
             
-            // FIXED: Safer candidate management - backup instead of delete
-            try {
-              const redisClient = await getRedisClient();
-              if (redisClient) {
-                const candidateKey = `ice_candidates_guide_${tourId}_${attendeeId}_${language}`;
-                const backupKey = `${candidateKey}_restart_backup_${now}`;
-                
-                // Backup candidates instead of deleting (safer for active connections)
-                const existingCandidates = await redisClient.lrange(candidateKey, 0, -1);
-                if (existingCandidates.length > 0) {
-                  await redisClient.rpush(backupKey, ...existingCandidates);
-                  await redisClient.expire(backupKey, 300); // 5-minute backup
-                  console.log(`${langContext} [GUIDE-ICE] 💾 Backed up ${existingCandidates.length} candidates before restart`);
-                  
-                  // Clear original key only after backup is confirmed
-                  await redisClient.del(candidateKey);
-                  console.log(`${langContext} [GUIDE-ICE] 🧹 Cleared old candidates (backup: ${backupKey})`);
-                }
+            // FIXED: Safer candidate management - backup via API call
+            fetch('/api/tour/ice-candidate/backup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tourId,
+                attendeeId,
+                language,
+                action: 'backup_and_clear',
+                timestamp: now
+              })
+            }).then(response => {
+              if (response.ok) {
+                return response.json();
               }
-            } catch (e) {
-              console.warn(`${langContext} [GUIDE-ICE] Failed to backup candidates:`, e);
+              throw new Error(`Backup API failed: ${response.status}`);
+            }).then(result => {
+              console.log(`${langContext} [GUIDE-ICE] 💾 ${result.message}`);
+            }).catch(e => {
+              console.warn(`${langContext} [GUIDE-ICE] Failed to backup candidates via API:`, e);
               // Continue without clearing - safer than losing candidates
-            }
+            });
 
             // Force ICE restart to generate more candidates
             attendeePC.createOffer({ iceRestart: true }).then(offer => {
