@@ -317,7 +317,7 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
           credential: "openrelayproject"
         }
       ],
-      iceCandidatePoolSize: 6,  
+      iceCandidatePoolSize: 15,  // Match guide's candidate pool size for symmetrical ICE negotiation
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
       iceTransportPolicy: 'all'

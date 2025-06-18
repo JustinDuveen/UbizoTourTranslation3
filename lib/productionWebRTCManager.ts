@@ -265,7 +265,7 @@ export class ProductionWebRTCManager {
       iceServers: iceServers || [
         { urls: 'stun:stun.l.google.com:19302' }
       ],
-      iceCandidatePoolSize: 10,
+      iceCandidatePoolSize: 15,  // Match guide's candidate pool size for symmetrical ICE negotiation
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require'
     };
@@ -274,7 +274,7 @@ export class ProductionWebRTCManager {
     if (this.performanceOptimizer) {
       const deviceCapabilities = this.performanceOptimizer.getDeviceCapabilities();
       if (deviceCapabilities.deviceType === 'mobile') {
-        rtcConfig.iceCandidatePoolSize = 6; // Reduce for mobile
+        rtcConfig.iceCandidatePoolSize = 12; // Reduce slightly for mobile but maintain good connectivity
       }
     }
 
