@@ -6,7 +6,8 @@
     "dev": "node server.js",
     "dev:default": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.js",
+    "start:default": "next start",
     "lint": "next lint",
     "test:webrtc": "node test-webrtc.js"
   },
