@@ -69,6 +69,8 @@ async function connectToRedis(): Promise<Redis> {
 
     const newClient = new Redis({
       ...redisConfig,
+      // Railway IPv6 support - CRITICAL for Railway's private network
+      family: 0, // Enable dual stack lookup (IPv4 + IPv6)
       // Railway-optimized settings
       retryDelayOnFailover: 100,
       maxRetriesPerRequest: 3,
