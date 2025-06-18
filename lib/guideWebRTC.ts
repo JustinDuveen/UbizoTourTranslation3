@@ -1729,9 +1729,83 @@ async function processAttendeeAnswer(
         }
       }
     } else {
-      console.warn(`${langContext} No audio stream available to forward to attendee ${attendeeId}`);
+      console.warn(`${langContext} 🚨 CRITICAL: No audio stream available to forward to attendee ${attendeeId}`);
       if (openAIConnection) {
         console.log(`${langContext} OpenAI connection exists but audioStream is ${openAIConnection.audioStream ? 'present' : 'missing'}`);
+        
+        // CRITICAL FIX: Setup audio forwarding retry for when OpenAI audio becomes available
+        console.log(`${langContext} 🔄 Setting up audio retry mechanism for attendee ${attendeeId}`);
+        
+        const audioRetryKey = `audio_retry_${attendeeId}`;
+        (openAIConnection as any)[audioRetryKey] = { 
+          attendeeId, 
+          attendeePC, 
+          retryCount: 0, 
+          maxRetries: 10 
+        };
+        
+        // Poll for audio stream availability (max 20 seconds)
+        const audioRetryInterval = setInterval(() => {
+          const retryInfo = (openAIConnection as any)[audioRetryKey];
+          if (!retryInfo) {
+            clearInterval(audioRetryInterval);
+            return;
+          }
+          
+          retryInfo.retryCount++;
+          console.log(`${langContext} 🔄 Audio retry attempt ${retryInfo.retryCount}/${retryInfo.maxRetries} for attendee ${attendeeId}`);
+          
+          if (openAIConnection.audioStream && openAIConnection.audioStream.getTracks().length > 0) {
+            console.log(`${langContext} ✅ Audio stream now available! Forwarding to attendee ${attendeeId}`);
+            
+            // Forward the now-available audio
+            const audioStream = openAIConnection.audioStream;
+            const tracks = audioStream.getTracks();
+            
+            tracks.forEach(track => {
+              try {
+                attendeePC.addTrack(track, audioStream);
+                console.log(`${langContext} ✅ RETRY SUCCESS: Audio track ${track.id} added to attendee ${attendeeId}`);
+              } catch (error) {
+                console.warn(`${langContext} Error adding retried track:`, error);
+              }
+            });
+            
+            // CRITICAL: Create new offer with audio tracks for renegotiation
+            try {
+              console.log(`${langContext} 🔄 Creating new offer with audio tracks for attendee ${attendeeId}`);
+              const newOffer = await attendeePC.createOffer();
+              await attendeePC.setLocalDescription(newOffer);
+              
+              // Store the new offer so attendee can get it
+              await fetch('/api/tour/offer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  language,
+                  tourId,
+                  offer: newOffer,
+                  attendeeId, // Specific offer for this attendee
+                  hasAudio: true // Flag that this offer includes audio
+                })
+              });
+              
+              console.log(`${langContext} ✅ New offer with audio tracks stored for attendee ${attendeeId}`);
+            } catch (renegotiationError) {
+              console.error(`${langContext} Failed to renegotiate with audio for attendee ${attendeeId}:`, renegotiationError);
+            }
+            
+            // Cleanup and stop retrying
+            delete (openAIConnection as any)[audioRetryKey];
+            clearInterval(audioRetryInterval);
+            
+          } else if (retryInfo.retryCount >= retryInfo.maxRetries) {
+            console.error(`${langContext} ❌ Audio retry failed after ${retryInfo.maxRetries} attempts for attendee ${attendeeId}`);
+            delete (openAIConnection as any)[audioRetryKey];
+            clearInterval(audioRetryInterval);
+          }
+        }, 2000); // Check every 2 seconds
+        
       } else {
         console.log(`${langContext} No OpenAI connection found for language ${language}`);
       }
@@ -1937,27 +2011,62 @@ async function createAttendeeConnection(
           console.log(`${langContext} [GUIDE-ICE] Remote candidates (from attendee): ${remoteCandidates.length}`, remoteCandidates);
           console.log(`${langContext} [GUIDE-ICE] Candidate pairs: ${candidatePairs.length}`, candidatePairs);
 
-          // CRITICAL FIX: Add ICE restart tracking to prevent infinite loops
+          // RESEARCH-BASED ICE RESTART: Optimized with exponential backoff
           const restartTrackingKey = `ice_restart_${attendeeId}`;
           if (!(attendeePC as any)[restartTrackingKey]) {
-            (attendeePC as any)[restartTrackingKey] = { attempts: 0, lastAttempt: 0 };
+            (attendeePC as any)[restartTrackingKey] = { 
+              attempts: 0, 
+              lastAttempt: 0,
+              successfulRestarts: 0
+            };
           }
           
           const restartInfo = (attendeePC as any)[restartTrackingKey];
           const now = Date.now();
           const timeSinceLastRestart = now - restartInfo.lastAttempt;
           
-          // Only restart if: very few candidates AND connection is actually failing AND not recently restarted
-          if (localCandidates.length < 2 && // Reduced threshold
-              attendeePC.iceConnectionState === 'failed' && // Only on failure, not just low count
-              restartInfo.attempts < 2 && // Maximum 2 restart attempts
-              timeSinceLastRestart > 10000) { // At least 10 seconds between restarts
+          // FIXED: Faster timing for real-time audio (research + production balance)
+          const baseDelay = 2000; // Reduced from 5000ms for faster recovery
+          const exponentialDelay = baseDelay * Math.pow(1.5, restartInfo.attempts); // Gentler 1.5x vs 2x
+          const maxDelay = 15000; // Reduced from 30000ms to 15s max
+          const adaptiveDelay = Math.min(exponentialDelay, maxDelay);
+          
+          // Enhanced restart conditions based on research
+          const shouldRestart = 
+            (localCandidates.length < 3 || attendeePC.iceConnectionState === 'failed') &&
+            restartInfo.attempts < 5 && // Increased from 2 to 5 attempts
+            timeSinceLastRestart > adaptiveDelay; // Adaptive delay
               
+          if (shouldRestart) {
             restartInfo.attempts++;
             restartInfo.lastAttempt = now;
             
-            console.warn(`${langContext} [GUIDE-ICE] ⚠️ ICE connection failed with only ${localCandidates.length} candidates (attempt ${restartInfo.attempts}/2)`);
-            console.warn(`${langContext} [GUIDE-ICE] 🔄 Forcing ICE restart to recover connection...`);
+            console.warn(`${langContext} [GUIDE-ICE] ⚠️ ICE connection needs restart: ${localCandidates.length} candidates, state: ${attendeePC.iceConnectionState} (attempt ${restartInfo.attempts}/5, delay: ${adaptiveDelay}ms)`);
+            console.warn(`${langContext} [GUIDE-ICE] 🔄 Initiating research-based ICE restart with exponential backoff...`);
+            
+            // FIXED: Safer candidate management - backup instead of delete
+            try {
+              const redisClient = await getRedisClient();
+              if (redisClient) {
+                const candidateKey = `ice_candidates_guide_${tourId}_${attendeeId}_${language}`;
+                const backupKey = `${candidateKey}_restart_backup_${now}`;
+                
+                // Backup candidates instead of deleting (safer for active connections)
+                const existingCandidates = await redisClient.lrange(candidateKey, 0, -1);
+                if (existingCandidates.length > 0) {
+                  await redisClient.rpush(backupKey, ...existingCandidates);
+                  await redisClient.expire(backupKey, 300); // 5-minute backup
+                  console.log(`${langContext} [GUIDE-ICE] 💾 Backed up ${existingCandidates.length} candidates before restart`);
+                  
+                  // Clear original key only after backup is confirmed
+                  await redisClient.del(candidateKey);
+                  console.log(`${langContext} [GUIDE-ICE] 🧹 Cleared old candidates (backup: ${backupKey})`);
+                }
+              }
+            } catch (e) {
+              console.warn(`${langContext} [GUIDE-ICE] Failed to backup candidates:`, e);
+              // Continue without clearing - safer than losing candidates
+            }
 
             // Force ICE restart to generate more candidates
             attendeePC.createOffer({ iceRestart: true }).then(offer => {

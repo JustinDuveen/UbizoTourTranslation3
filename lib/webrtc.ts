@@ -324,14 +324,14 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
     });
   }
 
-  // Create audio element
+  // Create audio element and add to DOM (critical for proper playback)
   const audioEl = new Audio();
   audioEl.autoplay = true;
   audioEl.muted = false;
   audioEl.volume = 1.0;
   audioEl.controls = true;
-
-  // Add to DOM prominently for attendee control
+  
+  // CRITICAL FIX: Add audio element to DOM prominently for reliable playback
   if (typeof document !== 'undefined') {
     const container = document.createElement('div');
     container.style.position = 'fixed';
@@ -345,6 +345,7 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
     container.style.color = 'white';
     container.style.boxShadow = '0 4px 15px rgba(0,0,0,0.5)';
     container.style.fontFamily = 'Arial, sans-serif';
+    container.setAttribute('data-tour-audio-container', 'true');
 
     const label = document.createElement('div');
     label.textContent = `🎧 Translation Audio (${language})`;
@@ -1423,7 +1424,7 @@ function cleanupConnection(language: string) {
       connection.pc.close();
     }
 
-    // Clean up audio element
+    // Clean up audio element and container
     if (connection.audioEl) {
       const mediaStream = connection.audioEl.srcObject as MediaStream;
       if (mediaStream) {
@@ -1433,6 +1434,15 @@ function cleanupConnection(language: string) {
         });
       }
       connection.audioEl.srcObject = null;
+      
+      // Remove audio container from DOM
+      const audioContainer = document.querySelector('[data-tour-audio-container="true"]');
+      if (audioContainer) {
+        audioContainer.remove();
+        console.log(`${language} ✅ Audio container removed from DOM`);
+      }
+      
+      // Fallback: remove audio element directly if container wasn't found
       if (connection.audioEl.parentElement) {
         connection.audioEl.parentElement.remove();
       }

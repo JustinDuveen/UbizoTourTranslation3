@@ -26,9 +26,10 @@ export async function getXirsysICEServers(): Promise<RTCIceServer[]> {
   }
 
   try {
-    // Fetch from our secure API endpoint
-    console.log('[XIRSYS] Making request to /api/xirsys/ice...');
-    const response = await fetch('/api/xirsys/ice', {
+    // Fetch from our secure API endpoint with geographic optimization
+    const region = await detectOptimalRegion();
+    console.log(`[XIRSYS] Making request to /api/xirsys/ice for region: ${region}...`);
+    const response = await fetch(`/api/xirsys/ice?region=${region}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -200,7 +201,78 @@ export function createXirsysRTCConfiguration(iceServers: RTCIceServer[], forceRe
   };
 }
 
+/**
+ * FIXED: Detects optimal Xirsys region with circuit breaker pattern
+ * Prevents external dependency from breaking WebRTC connections
+ */
+let regionDetectionFailed = false;
+const REGION_CACHE_KEY = 'xirsys_detected_region';
 
-
+async function detectOptimalRegion(): Promise<string> {
+  // FAST PATH: Use cached region if available
+  try {
+    const cachedRegion = localStorage.getItem(REGION_CACHE_KEY);
+    if (cachedRegion && !regionDetectionFailed) {
+      console.log(`[XIRSYS] Using cached region: ${cachedRegion}`);
+      return cachedRegion;
+    }
+  } catch (e) {
+    // localStorage not available, continue with detection
+  }
+  
+  // CIRCUIT BREAKER: Skip detection if it failed recently
+  if (regionDetectionFailed) {
+    console.log('[XIRSYS] Circuit breaker active, using global region');
+    return 'global';
+  }
+  
+  try {
+    // FAST TIMEOUT: Don't delay WebRTC connections
+    const response = await fetch('https://ipapi.co/json/', { 
+      signal: AbortSignal.timeout(1500) // Reduced from 3000ms to 1.5s
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Region API returned ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map regions based on Xirsys global infrastructure
+    const regionMap: { [key: string]: string } = {
+      'NA': 'us',     // North America
+      'SA': 'us',     // South America -> closest US
+      'EU': 'nl',     // Europe -> Netherlands
+      'AS': 'sg',     // Asia -> Singapore
+      'OC': 'au',     // Oceania -> Australia
+      'AF': 'nl'      // Africa -> Europe closest
+    };
+    
+    const continent = data.continent_code;
+    const region = regionMap[continent] || 'global';
+    
+    // Cache successful result
+    try {
+      localStorage.setItem(REGION_CACHE_KEY, region);
+    } catch (e) {
+      // Ignore localStorage errors
+    }
+    
+    console.log(`[XIRSYS] ✅ Detected region: ${continent} -> ${region}`);
+    return region;
+    
+  } catch (error) {
+    console.warn('[XIRSYS] ⚠️ Region detection failed, activating circuit breaker:', error);
+    regionDetectionFailed = true;
+    
+    // Reset circuit breaker after 5 minutes
+    setTimeout(() => {
+      regionDetectionFailed = false;
+      console.log('[XIRSYS] Circuit breaker reset');
+    }, 300000);
+    
+    return 'global';
+  }
+}
 
 
