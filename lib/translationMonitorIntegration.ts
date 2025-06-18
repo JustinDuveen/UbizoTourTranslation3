@@ -13,8 +13,8 @@ import { TranslationMonitor } from './translationMonitor';
  * Initialize the translation monitor if in development mode
  */
 export function initializeMonitor(): void {
-  // Only initialize if not in production and explicitly enabled
-  if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === 'true') {
+  // DISABLED: Translation monitor completely disabled for production stability
+  if (false) {
     console.log('[MonitorIntegration] Initializing translation monitor (NODE_ENV !== "production" && NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === "true")');
 
     // Check if the browser supports the monitor
@@ -94,22 +94,14 @@ export function enhanceOnTrackHandler(
   return (event: RTCTrackEvent) => {
     console.log(`[MonitorIntegration] ontrack event received for language: ${language}, track kind: ${event.track.kind}`);
 
-    // Call the original handler first
+    // Call the original handler only - NO MONITORING
     if (originalHandler) {
       console.log(`[MonitorIntegration] Calling original handler for language: ${language}`);
       originalHandler(event);
     }
 
-    // Then add monitoring if in development mode, explicitly enabled, and track is audio
-    if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === 'true' && event.track.kind === 'audio') {
-      console.log(`[MonitorIntegration] Monitoring track for language: ${language} (NODE_ENV !== "production" && NEXT_PUBLIC_ENABLE_TRANSLATION_MONITOR === "true")`);
-
-      // Small delay to ensure the original handler has completed its setup
-      setTimeout(() => {
-        console.log(`[MonitorIntegration] Setting up monitor for language: ${language}`);
-        TranslationMonitor.monitorTrack(event.track, language);
-      }, 500);
-    }
+    // DISABLED: Translation monitoring completely disabled for production stability
+    // No monitoring logic executed
   };
 }
 

@@ -331,22 +331,31 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
   audioEl.volume = 1.0;
   audioEl.controls = true;
 
-  // Add to DOM for debugging
+  // Add to DOM prominently for attendee control
   if (typeof document !== 'undefined') {
     const container = document.createElement('div');
     container.style.position = 'fixed';
     container.style.bottom = '20px';
-    container.style.right = '20px';
+    container.style.left = '50%';
+    container.style.transform = 'translateX(-50%)';
     container.style.zIndex = '9999';
-    container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-    container.style.padding = '10px';
-    container.style.borderRadius = '5px';
+    container.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+    container.style.padding = '15px 20px';
+    container.style.borderRadius = '10px';
     container.style.color = 'white';
+    container.style.boxShadow = '0 4px 15px rgba(0,0,0,0.5)';
+    container.style.fontFamily = 'Arial, sans-serif';
 
     const label = document.createElement('div');
-    label.textContent = `Attendee Audio: ${language}`;
-    label.style.marginBottom = '5px';
+    label.textContent = `🎧 Translation Audio (${language})`;
+    label.style.marginBottom = '10px';
     label.style.fontWeight = 'bold';
+    label.style.textAlign = 'center';
+    label.style.fontSize = '14px';
+
+    // Style the audio element for better visibility
+    audioEl.style.width = '250px';
+    audioEl.style.height = '40px';
 
     container.appendChild(label);
     container.appendChild(audioEl);
