@@ -31,7 +31,9 @@ import {
   Volume2,
   Headphones,
   Star,
-  Activity
+  Activity,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
 import { TranslationMonitor } from "@/lib/translationMonitor"
 
@@ -81,6 +83,7 @@ export default function GuidePage() {
   const [tourCreated, setTourCreated] = useState<boolean>(false); // State to track if tour is created
   const [copySuccess, setCopySuccess] = useState<string>("");
   const [tourStartTime, setTourStartTime] = useState<Date | null>(null);
+  const [isLanguageAccordionOpen, setIsLanguageAccordionOpen] = useState<boolean>(true); // State for language accordion
 
 
   // Mouse tracking for interactive effects
@@ -260,6 +263,9 @@ export default function GuidePage() {
       setTourStats(prev => ({ ...prev, activeConnections: finalSelectedLanguages.length }))
       setIsLoading(false)
 
+      // Auto-collapse language accordion when tour starts
+      setIsLanguageAccordionOpen(false)
+
       // Show success toast
       toast({
         title: "Tour Started",
@@ -305,6 +311,9 @@ export default function GuidePage() {
       setAttendees([] as Attendee[])
       setTranslations({})
       setTourCode(null)
+
+      // Re-open language accordion when tour ends
+      setIsLanguageAccordionOpen(true)
 
       // Show success toast
       toast({
@@ -422,20 +431,47 @@ export default function GuidePage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
           {/* Left Column - Setup & Controls */}
           <div className="order-1 lg:order-1 space-y-6">
-            {/* Language Selection Card */}
-            <Card className="bg-white/5 backdrop-blur-sm border-white/10 hover:border-white/20 transition-all duration-300">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center">
-                  <Globe className="h-5 w-5 mr-2 text-blue-400" />
-                  Language Setup
+            {/* Language Selection Accordion */}
+            <Card className={`backdrop-blur-sm transition-all duration-300 ${
+              selectedLanguages.length > 0 && !isLanguageAccordionOpen
+                ? 'bg-blue-500/10 border-blue-500/30 hover:border-blue-500/40'
+                : 'bg-white/5 border-white/10 hover:border-white/20'
+            }`}>
+              <CardHeader
+                className="cursor-pointer"
+                onClick={() => setIsLanguageAccordionOpen(!isLanguageAccordionOpen)}
+              >
+                <CardTitle className="text-white flex items-center justify-between">
+                  <div className="flex items-center">
+                    <Globe className="h-5 w-5 mr-2 text-blue-400" />
+                    Language Setup
+                    {selectedLanguages.length > 0 && (
+                      <Badge variant="secondary" className="ml-2 bg-blue-500/20 text-blue-400 border-blue-500/30 text-xs">
+                        {selectedLanguages.length} selected
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-white/60 hover:text-white transition-colors">
+                    {isLanguageAccordionOpen ? (
+                      <ChevronUp className="h-5 w-5" />
+                    ) : (
+                      <ChevronDown className="h-5 w-5" />
+                    )}
+                  </div>
                 </CardTitle>
                 <CardDescription className="text-white/70">
-                  Select languages for real-time translation
+                  {isLanguageAccordionOpen
+                    ? "Select languages for real-time translation"
+                    : selectedLanguages.length > 0
+                      ? `Broadcasting in: ${selectedLanguages.join(", ")}`
+                      : "Click to select languages for translation"
+                  }
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              {isLanguageAccordionOpen && (
+                <CardContent className="pt-0 animate-in slide-in-from-top-2 duration-200">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
-                  {["English", "French", "German", "Spanish", "Italian", "Dutch", "Portuguese"].map(lang => {
+                  {["French", "German", "Spanish", "Italian", "Dutch", "Portuguese"].map(lang => {
                     const isSelected = selectedLanguages.map(l => l.toLowerCase()).includes(lang.toLowerCase())
                     const isPrimary = primaryLanguage.toLowerCase() === lang.toLowerCase()
 
@@ -494,15 +530,16 @@ export default function GuidePage() {
                   })}
                 </div>
 
-                {selectedLanguages.length > 0 && (
-                  <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
-                    <div className="flex items-center text-green-400 text-sm">
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      {selectedLanguages.length} language{selectedLanguages.length > 1 ? 's' : ''} selected
+                  {selectedLanguages.length > 0 && (
+                    <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                      <div className="flex items-center text-green-400 text-sm">
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        {selectedLanguages.length} language{selectedLanguages.length > 1 ? 's' : ''} selected
+                      </div>
                     </div>
-                  </div>
-                )}
-              </CardContent>
+                  )}
+                </CardContent>
+              )}
             </Card>
             {/* Tour Code Display */}
             {tourCreated && tourCode && (

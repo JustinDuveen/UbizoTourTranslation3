@@ -1939,11 +1939,11 @@ async function createAttendeeConnection(
 
           // CRITICAL FIX: Add ICE restart tracking to prevent infinite loops
           const restartTrackingKey = `ice_restart_${attendeeId}`;
-          if (!attendeePC[restartTrackingKey]) {
-            attendeePC[restartTrackingKey] = { attempts: 0, lastAttempt: 0 };
+          if (!(attendeePC as any)[restartTrackingKey]) {
+            (attendeePC as any)[restartTrackingKey] = { attempts: 0, lastAttempt: 0 };
           }
           
-          const restartInfo = attendeePC[restartTrackingKey];
+          const restartInfo = (attendeePC as any)[restartTrackingKey];
           const now = Date.now();
           const timeSinceLastRestart = now - restartInfo.lastAttempt;
           
