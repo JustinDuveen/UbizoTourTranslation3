@@ -22,6 +22,11 @@ let serverCache: CachedICEResponse | null = null;
 export async function GET(request: NextRequest) {
   console.log('[XIRSYS-API] ICE server request received');
 
+  // WEBRTC FIX: Get tour session info for consistent server assignment
+  const { searchParams } = new URL(request.url);
+  const tourId = searchParams.get('tourId');
+  const sessionKey = tourId ? `tour_ice_${tourId}` : null;
+
   try {
     // Check environment variables
     const channel = process.env.XIRSYS_CHANNEL;
@@ -49,7 +54,20 @@ export async function GET(request: NextRequest) {
         success: true,
         iceServers: serverCache.iceServers,
         cached: true,
-        expiresIn: serverCache.expiresAt - Date.now()
+        expiresIn: serverCache.expiresAt - Date.now(),
+        tourId: tourId || 'global'
+      });
+    }
+
+    // WEBRTC FIX: For tour sessions, extend cache lifetime to ensure consistency
+    if (sessionKey && serverCache && Date.now() < (serverCache.expiresAt + 900000)) { // Extra 15min for tours
+      console.log(`[XIRSYS-API] Using extended cache for tour session consistency: ${tourId}`);
+      return NextResponse.json({
+        success: true,
+        iceServers: serverCache.iceServers,
+        cached: true,
+        extended: true,
+        tourId: tourId || 'global'
       });
     }
 

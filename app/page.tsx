@@ -225,7 +225,7 @@ export default function Home() {
             {/* Guide Card */}
             <Card
               className="group relative overflow-hidden bg-gradient-to-br from-blue-500/20 to-purple-600/20 backdrop-blur-sm border-white/20 hover:border-blue-400/50 transition-all duration-500 hover:scale-105 cursor-pointer"
-              onClick={() => router.push("/login")}
+              onClick={() => router.push("/auth")}
             >
               <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 to-purple-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
 
@@ -274,7 +274,7 @@ export default function Home() {
             {/* Attendee Card */}
             <Card
               className="group relative overflow-hidden bg-gradient-to-br from-green-500/20 to-cyan-500/20 backdrop-blur-sm border-white/20 hover:border-green-400/50 transition-all duration-500 hover:scale-105 cursor-pointer"
-              onClick={() => router.push("/attendee")}
+              onClick={() => router.push("/auth")}
             >
               <div className="absolute inset-0 bg-gradient-to-br from-green-600/10 to-cyan-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
 

@@ -556,7 +556,7 @@ export default function GuidePage() {
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center space-y-3 sm:space-y-0 sm:space-x-3">
                       <div className="relative flex-1">
                         <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/20 to-blue-400/20 rounded-xl blur-sm"></div>
-                        <div className="relative bg-gradient-to-r from-cyan-500/30 to-blue-500/30 border border-cyan-400/50 rounded-xl p-4 font-mono text-2xl sm:text-3xl text-center text-cyan-100 font-bold tracking-[0.3em] shadow-lg">
+                        <div className="relative bg-[#90EE90] border border-cyan-400/50 rounded-xl p-4 font-mono text-2xl sm:text-3xl text-center text-black font-bold tracking-[0.3em] shadow-lg">
                           {tourCode}
                         </div>
                       </div>

@@ -25,11 +25,24 @@ export async function getXirsysICEServers(): Promise<RTCIceServer[]> {
     return cachedServers.servers;
   }
 
+  // WEBRTC FIX: Check if cache is slightly expired but still usable (extend cache for consistency)
+  if (cachedServers && Date.now() < (cachedServers.expiresAt + 300000)) { // Extra 5min grace period
+    console.log('[XIRSYS] ⚠️ Using slightly expired cached ICE servers for consistency (guide/attendee same servers)');
+    return cachedServers.servers;
+  }
+
   try {
     // Fetch from our secure API endpoint with geographic optimization
     const region = await detectOptimalRegion();
-    console.log(`[XIRSYS] Making request to /api/xirsys/ice for region: ${region}...`);
-    const response = await fetch(`/api/xirsys/ice?region=${region}`, {
+    
+    // WEBRTC FIX: Pass tourId for session consistency if available
+    const tourId = getTourIdFromContext();
+    const url = tourId 
+      ? `/api/xirsys/ice?region=${region}&tourId=${tourId}`
+      : `/api/xirsys/ice?region=${region}`;
+    
+    console.log(`[XIRSYS] Making request to ${url}...`);
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -272,6 +285,33 @@ async function detectOptimalRegion(): Promise<string> {
     }, 300000);
     
     return 'global';
+  }
+}
+
+/**
+ * WEBRTC FIX: Get tour ID from current context for session consistency
+ */
+function getTourIdFromContext(): string | null {
+  try {
+    // Try to get from URL params (for guide/attendee pages)
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tourCode = urlParams.get('tourCode');
+      if (tourCode) {
+        return tourCode;
+      }
+      
+      // Try to get from localStorage
+      const tourId = localStorage.getItem('currentTourId');
+      if (tourId) {
+        return tourId;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('[XIRSYS] Could not get tour context:', error);
+    return null;
   }
 }
 

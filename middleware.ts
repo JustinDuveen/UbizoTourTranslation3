@@ -34,26 +34,26 @@ export async function middleware(request: NextRequest) {
 
   if (isGuidePath || isAttendeePath) {
     if (!token) {
-      console.log("Middleware - No token, redirecting to login")
-      return NextResponse.redirect(new URL("/login", request.url))
+      console.log("Middleware - No token, redirecting to auth")
+      return NextResponse.redirect(new URL("/auth", request.url))
     }
 
     const user = await verifyToken(token)
     console.log("Middleware - Verified user:", user)
     
     if (!user) {
-      console.log("Middleware - Invalid token, redirecting to login")
-      return NextResponse.redirect(new URL("/login", request.url))
+      console.log("Middleware - Invalid token, redirecting to auth")
+      return NextResponse.redirect(new URL("/auth", request.url))
     }
 
     // Check if user has correct role for the path
     if (isGuidePath && user.role !== "guide") {
-      console.log("Middleware - Not a guide, redirecting to login")
-      return NextResponse.redirect(new URL("/login", request.url))
+      console.log("Middleware - Not a guide, redirecting to auth")
+      return NextResponse.redirect(new URL("/auth", request.url))
     }
     if (isAttendeePath && user.role !== "attendee") {
-      console.log("Middleware - Not an attendee, redirecting to login")
-      return NextResponse.redirect(new URL("/login", request.url))
+      console.log("Middleware - Not an attendee, redirecting to auth")
+      return NextResponse.redirect(new URL("/auth", request.url))
     }
 
     console.log("Middleware - Access granted")
