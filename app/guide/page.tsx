@@ -36,6 +36,7 @@ import {
   ChevronUp
 } from "lucide-react"
 import { TranslationMonitor } from "@/lib/translationMonitor"
+import { normalizeLanguageForStorage, formatLanguageForDisplay } from "@/lib/languageUtils"
 
 // Professional loading component
 function LoadingSpinner() {
@@ -227,9 +228,9 @@ export default function GuidePage() {
       const initializationErrors = [];
 
       for (const language of finalSelectedLanguages) {
-        // Ensure proper case for language names to match audio file naming
-        const normalizedLanguage = language.charAt(0).toUpperCase() + language.slice(1).toLowerCase();
-        console.log(`Initializing WebRTC for language: ${normalizedLanguage}`);
+        // Normalize language to lowercase for consistent WebRTC connection tracking
+        const normalizedLanguage = normalizeLanguageForStorage(language);
+        console.log(`Initializing WebRTC for language: ${normalizedLanguage} (display: ${formatLanguageForDisplay(language)})`);
 
         const handleTranslationUpdate = (text: string) => {
           setTranslations(prev => ({

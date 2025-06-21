@@ -1,4 +1,4 @@
-import { executeReplaceOfferTransaction } from "@/lib/languageUtils";
+import { executeReplaceOfferTransaction, normalizeLanguageForStorage } from "@/lib/languageUtils";
 import { getSignalingClient, initializeSignaling } from "@/lib/webrtcSignaling";
 import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/iceConnectionMonitor";
 
@@ -303,13 +303,15 @@ export async function initGuideWebRTC(
   tourId: string,
   tourCode: string
 ): Promise<void> {
-  const langContext = `[${language}]`;
-  console.log(`${langContext} Initializing Guide WebRTC with WebSocket signaling...`);
+  // Ensure language is normalized to lowercase for consistent key storage
+  const normalizedLanguage = normalizeLanguageForStorage(language);
+  const langContext = `[${normalizedLanguage}]`;
+  console.log(`${langContext} Initializing Guide WebRTC with WebSocket signaling... (original: ${language})`);
 
   // Cleanup existing connection for this language if it exists
-  if (openAIConnectionsByLanguage.has(language)) {
+  if (openAIConnectionsByLanguage.has(normalizedLanguage)) {
     console.log(`${langContext} Cleaning up existing connection before reinitializing`);
-    cleanupGuideWebRTC(language);
+    cleanupGuideWebRTC(normalizedLanguage);
   }
 
   // Use tourCode directly for WebSocket room consistency with attendees
@@ -317,7 +319,7 @@ export async function initGuideWebRTC(
 
   // Initialize WebSocket signaling first
   console.log(`${langContext} Initializing WebSocket signaling for guide...`);
-  const signalingClient = await initializeSignaling(tourCode, language, 'guide');
+  const signalingClient = await initializeSignaling(tourCode, normalizedLanguage, 'guide');
   
   if (!signalingClient) {
     console.error(`${langContext} Failed to initialize WebSocket signaling`);
@@ -335,13 +337,13 @@ export async function initGuideWebRTC(
     }
   }
 
-  const connection = await setupOpenAIConnection(language, setTranslation, setAttendees, tourId, signalingClient);
+  const connection = await setupOpenAIConnection(normalizedLanguage, setTranslation, setAttendees, tourId, signalingClient);
   if (connection) {
-    openAIConnectionsByLanguage.set(language, connection);
+    openAIConnectionsByLanguage.set(normalizedLanguage, connection);
     console.log(`${langContext} Guide WebRTC initialized successfully`);
   } else {
     console.error(`${langContext} Failed to initialize Guide WebRTC`);
-    throw new Error(`Failed to initialize WebRTC for ${language}`);
+    throw new Error(`Failed to initialize WebRTC for ${normalizedLanguage}`);
   }
 }
 
@@ -379,7 +381,9 @@ export function toggleMicrophoneMute(mute: boolean): void {
 }
 
 export function cleanupGuideWebRTC(specificLanguage?: string): void {
-  console.log(`Cleaning up Guide WebRTC connection${specificLanguage ? ` for ${specificLanguage}` : 's'}...`);
+  // Normalize language for consistent cleanup if specified
+  const normalizedSpecificLanguage = specificLanguage ? normalizeLanguageForStorage(specificLanguage) : undefined;
+  console.log(`Cleaning up Guide WebRTC connection${normalizedSpecificLanguage ? ` for ${normalizedSpecificLanguage}` : 's'}...`);
 
 
   const cleanupConnection = (language: string, connection: OpenAIConnection) => {
@@ -468,11 +472,11 @@ export function cleanupGuideWebRTC(specificLanguage?: string): void {
     openAIConnectionsByLanguage.delete(language);
   };
 
-  if (specificLanguage) {
-    const connection = openAIConnectionsByLanguage.get(specificLanguage);
+  if (normalizedSpecificLanguage) {
+    const connection = openAIConnectionsByLanguage.get(normalizedSpecificLanguage);
     if (connection) {
-      cleanupConnection(specificLanguage, connection);
-      console.log(`[${specificLanguage}] Connection cleaned up`);
+      cleanupConnection(normalizedSpecificLanguage, connection);
+      console.log(`[${normalizedSpecificLanguage}] Connection cleaned up`);
     }
   } else {
     // Clean up all connections
@@ -871,18 +875,6 @@ async function setupOpenAIConnection(
 
         // Store the stream for forwarding to attendees - with enhanced error handling
         let connection = openAIConnectionsByLanguage.get(language);
-        
-        // CRITICAL FIX: If connection doesn't exist, check for case-insensitive match
-        if (!connection) {
-          console.log(`${langContext} Connection not found with exact match, checking case-insensitive...`);
-          const matchingEntry = Array.from(openAIConnectionsByLanguage.entries())
-            .find(([key]) => key.toLowerCase() === language.toLowerCase());
-          
-          if (matchingEntry) {
-            console.log(`${langContext} Found connection with case-insensitive match: ${matchingEntry[0]}`);
-            connection = matchingEntry[1];
-          }
-        }
         
         if (!connection) {
           console.error(`${langContext} ❌ CRITICAL: No OpenAI connection found for language ${language} - cannot store audio stream!`);

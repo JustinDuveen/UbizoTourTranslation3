@@ -88,7 +88,7 @@ export default function AttendeePage() {
       setConnectionState('connecting')
       await initWebRTC({
         onTranslation: (text) => setTranslation(DOMPurify.sanitize(text)),
-        language: selectedLanguage.charAt(0).toUpperCase() + selectedLanguage.slice(1).toLowerCase(),
+        language: normalizeLanguageForStorage(selectedLanguage),
         tourCode,
         attendeeName,
         signal: abortControllerRef.current.signal

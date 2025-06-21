@@ -2,6 +2,7 @@
 import { getXirsysICEServers, createXirsysRTCConfiguration } from './xirsysConfig';
 import { initializeSignaling, cleanupSignaling } from './webrtcSignaling';
 import { createICEMonitor, type ICETimeoutEvent } from './iceConnectionMonitor';
+import { normalizeLanguageForStorage } from './languageUtils';
 
 interface AttendeeConnection {
   pc: RTCPeerConnection;
@@ -37,9 +38,11 @@ interface WebRTCOptions {
 
 export async function initWebRTC(options: WebRTCOptions) {
   const { onTranslation, language, tourCode, attendeeName, signal, existingAttendeeId } = options;
-  const langContext = `[${language}]`;
+  // Ensure language is normalized to lowercase for consistent key storage
+  const normalizedLanguage = normalizeLanguageForStorage(language);
+  const langContext = `[${normalizedLanguage}]`;
 
-  console.log(`${langContext} Initializing Attendee WebRTC...`);
+  console.log(`${langContext} Initializing Attendee WebRTC... (original: ${language})`);
 
   if (!tourCode) {
     throw new Error('Missing tour code for WebRTC initialization');
@@ -52,14 +55,14 @@ export async function initWebRTC(options: WebRTCOptions) {
 
   try {
     // Cleanup existing connection if it exists
-    if (connections.has(language)) {
+    if (connections.has(normalizedLanguage)) {
       console.log(`${langContext} Cleaning up existing connection`);
-      cleanupConnection(language);
+      cleanupConnection(normalizedLanguage);
     }
 
     // Initialize WebSocket signaling first (we'll update the attendeeId after getting it from the server)
     console.log(`${langContext} Initializing WebSocket signaling for attendee...`);
-    let signalingClient = await initializeSignaling(tourCode, language, 'attendee', existingAttendeeId);
+    let signalingClient = await initializeSignaling(tourCode, normalizedLanguage, 'attendee', existingAttendeeId);
     
     if (!signalingClient) {
       console.warn(`${langContext} Failed to initialize WebSocket signaling, falling back to HTTP polling`);
@@ -68,7 +71,7 @@ export async function initWebRTC(options: WebRTCOptions) {
     }
 
     // Fetch tour offer
-    const { offer, tourId, placeholder } = await fetchTourOffer(tourCode, language, attendeeName);
+    const { offer, tourId, placeholder } = await fetchTourOffer(tourCode, normalizedLanguage, attendeeName);
     localStorage.setItem('currentTourId', tourId);
 
     if (placeholder) {
@@ -76,7 +79,7 @@ export async function initWebRTC(options: WebRTCOptions) {
     }
 
     // Create peer connection with immediate ICE handling (aligned with guide behavior)
-    const { pc, audioEl } = await createPeerConnection(language, tourCode, true); // Pass true to enable immediate ICE handling
+    const { pc, audioEl } = await createPeerConnection(normalizedLanguage, tourCode, true); // Pass true to enable immediate ICE handling
 
     // CRITICAL FIX: Set remote description FIRST (this triggers ICE candidate generation)
     console.log(`${langContext} Setting remote description from guide offer...`);
@@ -127,7 +130,7 @@ export async function initWebRTC(options: WebRTCOptions) {
 
     // Complete signaling by sending answer to get attendeeId
     console.log(`${langContext} Sending answer to guide...`);
-    const { attendeeId } = await completeSignaling(pc, language, tourId, offer, attendeeName, existingAttendeeId, signalingClient);
+    const { attendeeId } = await completeSignaling(pc, normalizedLanguage, tourId, offer, attendeeName, existingAttendeeId, signalingClient);
     console.log(`${langContext} Answer sent successfully with attendeeId: ${attendeeId}`);
 
     // CRITICAL FIX: Update signaling client with correct attendeeId after getting it from server
@@ -135,7 +138,7 @@ export async function initWebRTC(options: WebRTCOptions) {
       console.log(`${langContext} 🔄 Updating WebSocket signaling client with correct attendeeId: ${attendeeId}`);
       // Reconnect with correct attendeeId
       signalingClient.disconnect();
-      signalingClient = await initializeSignaling(tourCode, language, 'attendee', attendeeId);
+      signalingClient = await initializeSignaling(tourCode, normalizedLanguage, 'attendee', attendeeId);
       if (signalingClient) {
         console.log(`${langContext} ✅ WebSocket signaling reconnected with correct attendeeId: ${attendeeId}`);
       } else {
@@ -144,7 +147,7 @@ export async function initWebRTC(options: WebRTCOptions) {
     }
 
     // Create ICE connection monitor
-    const iceMonitor = createICEMonitor(pc, language, 'attendee', attendeeId, 30000);
+    const iceMonitor = createICEMonitor(pc, normalizedLanguage, 'attendee', attendeeId, 30000);
     
     // Start monitoring with enhanced timeout handling
     iceMonitor.startMonitoring((event: ICETimeoutEvent) => {
@@ -154,19 +157,19 @@ export async function initWebRTC(options: WebRTCOptions) {
       // Trigger reconnection with exponential backoff
       const connection = connections.get(language);
       if (connection && !connection.isReconnecting) {
-        scheduleReconnection(language, `ICE timeout: ${event.analysis.failureReason}`);
+        scheduleReconnection(normalizedLanguage, `ICE timeout: ${event.analysis.failureReason}`);
       }
     });
 
     // Now that we have attendeeId, enable full ICE candidate handling and process pending candidates
     console.log(`${langContext} Enabling full ICE candidate handling with attendeeId: ${attendeeId}`);
-    enableIceCandidateHandling(pc, language, tourId, attendeeId, signalingClient);
+    enableIceCandidateHandling(pc, normalizedLanguage, tourId, attendeeId, signalingClient);
 
     // Set up key refresh
-    const keyRefreshTimer = setupKeyRefresh(language);
+    const keyRefreshTimer = setupKeyRefresh(normalizedLanguage);
 
     // Store connection with the correct attendeeId from answer
-    connections.set(language, {
+    connections.set(normalizedLanguage, {
       pc,
       audioEl,
       tourCode,
@@ -179,7 +182,7 @@ export async function initWebRTC(options: WebRTCOptions) {
     });
 
     // Set up media handlers
-    setupMediaHandlers(pc, audioEl, onTranslation, language);
+    setupMediaHandlers(pc, audioEl, onTranslation, normalizedLanguage);
 
     // Setup WebSocket handlers for real-time signaling or fall back to polling
     if (signalingClient) {
@@ -213,11 +216,11 @@ export async function initWebRTC(options: WebRTCOptions) {
       
       // CRITICAL FIX: Start HTTP polling ALONGSIDE WebSocket for reliability
       console.log(`${langContext} Starting dual-path ICE delivery: WebSocket + HTTP polling`);
-      startIceCandidatePolling(pc, language, tourId, attendeeId);
+      startIceCandidatePolling(pc, normalizedLanguage, tourId, attendeeId);
     } else {
       // Fall back to HTTP polling only
       console.log(`${langContext} Falling back to HTTP polling for ICE candidates...`);
-      startIceCandidatePolling(pc, language, tourId, attendeeId);
+      startIceCandidatePolling(pc, normalizedLanguage, tourId, attendeeId);
     }
 
     console.log(`${langContext} WebRTC initialization completed successfully`);
@@ -225,7 +228,7 @@ export async function initWebRTC(options: WebRTCOptions) {
     // Cleanup on abort
     signal?.addEventListener('abort', () => {
       console.log(`${langContext} Abort signal received, cleaning up`);
-      cleanupConnection(language);
+      cleanupConnection(normalizedLanguage);
     });
 
   } catch (error) {
@@ -236,8 +239,8 @@ export async function initWebRTC(options: WebRTCOptions) {
     }
 
     // Clean up any partial connections
-    if (connections.has(language)) {
-      cleanupConnection(language);
+    if (connections.has(normalizedLanguage)) {
+      cleanupConnection(normalizedLanguage);
     }
     throw error;
   }
