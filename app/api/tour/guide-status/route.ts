@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getRedisClient } from "@/lib/redis";
 import { headers } from "next/headers";
 import { verifyToken } from "@/lib/auth";
+import { normalizeLanguageForStorage } from "@/lib/languageUtils";
 
 /**
  * Helper function to extract the user from the request cookies.
@@ -88,7 +89,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const tourId = searchParams.get("tourId");
-    const language = searchParams.get("language");
+    const languageParam = searchParams.get("language");
+    const language = languageParam ? normalizeLanguageForStorage(languageParam) : null;
 
     if (!tourId) {
       return NextResponse.json(
