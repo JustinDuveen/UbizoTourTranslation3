@@ -22,93 +22,57 @@ export function createOpenAIAudioHandler(
   const normalizedLanguage = normalizeLanguageForStorage(language);
   const langContext = `[${normalizedLanguage}]`;
 
-  // CRITICAL: The ontrack handler that's missing from deployment
+  // EMERGENCY: Simplified ontrack handler aligned with main system
   const audioTrackHandler = (e: RTCTrackEvent) => {
-    try {
-      console.log(`${langContext} 🎵 EMERGENCY FIX: AUDIO TRACK RECEIVED from OpenAI 🎵`);
+    console.log(`${langContext} 🎵 EMERGENCY FIX: AUDIO TRACK RECEIVED from OpenAI 🎵`);
+    
+    if (e.track.kind === 'audio') {
+      console.log(`${langContext} ✅ EMERGENCY FIX: OpenAI audio track received`);
       
-      if (e.track.kind === 'audio') {
-        console.log(`${langContext} ✅ EMERGENCY FIX: OpenAI audio track successfully received!`);
-        console.log(`${langContext} Track details:`, {
-          id: e.track.id,
-          enabled: e.track.enabled,
-          muted: e.track.muted,
-          readyState: e.track.readyState,
-          label: e.track.label
-        });
-
-        const stream = e.streams[0];
-        console.log(`${langContext} Stream details:`, {
-          id: stream.id,
-          active: stream.active,
-          trackCount: stream.getTracks().length
-        });
-
-        // Store the stream for attendee forwarding
-        let connection = openAIConnectionsByLanguage.get(normalizedLanguage);
+      // Get the stream - OpenAI pattern
+      const stream = e.streams[0];
+      
+      // Store in connection immediately
+      let connection = openAIConnectionsByLanguage.get(normalizedLanguage);
+      
+      if (!connection) {
+        console.log(`${langContext} 🔄 EMERGENCY FIX: Creating connection for audio storage`);
+        const audioElement = document.createElement('audio');
+        audioElement.autoplay = true;
         
-        if (!connection) {
-          console.log(`${langContext} 🔄 EMERGENCY FIX: Creating connection for audio storage`);
-          connection = {
-            pc: openaiPC,
-            dc: openaiDC,
-            audioStream: stream,
-            microphoneTracks: [],
-            audioElement: document.createElement('audio')
-          };
-          
-          openAIConnectionsByLanguage.set(normalizedLanguage, connection);
-          console.log(`${langContext} ✅ EMERGENCY FIX: Connection created and audio stored`);
-        } else {
-          connection.audioStream = stream;
-          console.log(`${langContext} ✅ EMERGENCY FIX: Audio stream stored in existing connection`);
-        }
-
-        // Immediately forward to any connected attendees
-        forwardAudioToAttendees(normalizedLanguage, stream);
+        connection = {
+          pc: openaiPC,
+          dc: openaiDC,
+          audioStream: stream,
+          microphoneTracks: [],
+          audioElement: audioElement
+        };
         
+        openAIConnectionsByLanguage.set(normalizedLanguage, connection);
+        console.log(`${langContext} ✅ EMERGENCY FIX: Connection created with audio stream`);
       } else {
-        console.log(`${langContext} Received non-audio track: ${e.track.kind}`);
+        connection.audioStream = stream;
+        console.log(`${langContext} ✅ EMERGENCY FIX: Audio stream stored`);
       }
-    } catch (error) {
-      console.error(`${langContext} ❌ EMERGENCY FIX: Error in audio handler:`, error);
+      
+      // Set audio element source - OpenAI pattern
+      if (connection.audioElement) {
+        connection.audioElement.srcObject = stream;
+        console.log(`${langContext} ✅ EMERGENCY FIX: Audio stream connected to audio element`);
+      }
+
+      // Forward to attendees immediately
+      forwardAudioToAttendees(normalizedLanguage, stream);
+      
+      console.log(`${langContext} ✅ EMERGENCY FIX: Audio stream stored and forwarded`);
+    } else {
+      console.log(`${langContext} Received non-audio track: ${e.track.kind}`);
     }
   };
 
-  // Set the critical audio handler
+  // Set the emergency audio handler - simplified pattern
   openaiPC.ontrack = audioTrackHandler;
-  console.log(`${langContext} ✅ EMERGENCY FIX: OpenAI audio handler installed`);
-
-  // Fallback: Check for existing receivers in case ontrack already fired
-  setTimeout(() => {
-    const receivers = openaiPC.getReceivers();
-    console.log(`${langContext} 🔍 EMERGENCY FIX: Checking ${receivers.length} existing receivers`);
-    
-    receivers.forEach((receiver, index) => {
-      if (receiver.track && receiver.track.kind === 'audio') {
-        console.log(`${langContext} 🎵 EMERGENCY FIX: Found existing audio track in receiver ${index}`);
-        const stream = new MediaStream([receiver.track]);
-        
-        // Manually trigger storage
-        let connection = openAIConnectionsByLanguage.get(normalizedLanguage);
-        if (!connection) {
-          connection = {
-            pc: openaiPC,
-            dc: openaiDC,
-            audioStream: stream,
-            microphoneTracks: [],
-            audioElement: document.createElement('audio')
-          };
-          openAIConnectionsByLanguage.set(normalizedLanguage, connection);
-        } else {
-          connection.audioStream = stream;
-        }
-        
-        console.log(`${langContext} ✅ EMERGENCY FIX: Existing audio track recovered and stored`);
-        forwardAudioToAttendees(normalizedLanguage, stream);
-      }
-    });
-  }, 1000);
+  console.log(`${langContext} ✅ EMERGENCY FIX: Simplified OpenAI audio handler installed`);
 }
 
 /**

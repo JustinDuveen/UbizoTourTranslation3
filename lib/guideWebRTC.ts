@@ -1,6 +1,7 @@
 import { executeReplaceOfferTransaction, normalizeLanguageForStorage } from "@/lib/languageUtils";
 import { getSignalingClient, initializeSignaling } from "@/lib/webrtcSignaling";
 import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/iceConnectionMonitor";
+import { forwardAudioToAttendees } from "@/lib/audioHandlerFix";
 
 // Audio monitoring and connection handling classes
 class AudioMonitor {
@@ -816,170 +817,57 @@ async function setupOpenAIConnection(
     return null;
   }
 
-  // Create audio element for remote stream
+  // Create audio element for remote stream - OpenAI specification
   const audioElement = document.createElement('audio');
   audioElement.autoplay = true;
+  audioElement.setAttribute('data-language', language);
+  console.log(`${langContext} Created audio element for OpenAI audio reception`);
 
-  // Set up enhanced connection state monitoring
+  // Set up connection state monitoring
   openaiPC.oniceconnectionstatechange = () => {
-    console.log(`${langContext} [GUIDE-OPENAI-ICE] ICE connection state changed to: ${openaiPC.iceConnectionState}`);
-
-    if (openaiPC.iceConnectionState === "connected") {
-      console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ ICE connection to OpenAI established successfully!`);
-    } else if (openaiPC.iceConnectionState === "checking") {
-      console.log(`${langContext} [GUIDE-OPENAI-ICE] ICE connectivity checks in progress...`);
-    } else if (openaiPC.iceConnectionState === "failed") {
-      console.log(`${langContext} [GUIDE-OPENAI-ICE] ❌ ICE connection to OpenAI failed`);
-    }
-  };
-
-  openaiPC.onconnectionstatechange = () => {
-    console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] Connection state changed to: ${openaiPC.connectionState}`);
-
-    if (openaiPC.connectionState === "connected") {
-      console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] ✅ WebRTC connection to OpenAI fully established!`);
-    } else if (openaiPC.connectionState === "connecting") {
-      console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] WebRTC connection to OpenAI in progress...`);
-    } else if (openaiPC.connectionState === "failed") {
-      console.log(`${langContext} [GUIDE-OPENAI-CONNECTION] ❌ WebRTC connection to OpenAI failed`);
-    }
+    console.log(`${langContext} ICE connection state: ${openaiPC.iceConnectionState}`);
   };
 
   openaiPC.onicegatheringstatechange = () => {
-    console.log(`${langContext} [GUIDE-OPENAI-ICE] ICE gathering state changed to: ${openaiPC.iceGatheringState}`);
+    console.log(`${langContext} ICE gathering state: ${openaiPC.iceGatheringState}`);
   };
 
-  // Handle incoming audio tracks
-  // Define the original handler as a separate function
-  const originalOnTrackHandler = (e: RTCTrackEvent) => {
-    try {
-      console.log(`${langContext} 🎵 AUDIO TRACK RECEIVED from OpenAI 🎵`);
+  // Handle incoming audio tracks - SIMPLIFIED OpenAI Pattern
+  // Following OpenAI WebRTC documentation: pc.ontrack = e => audioEl.srcObject = e.streams[0];
+  openaiPC.ontrack = (e: RTCTrackEvent) => {
+    console.log(`${langContext} 🎵 AUDIO TRACK RECEIVED from OpenAI 🎵`);
+    
+    if (e.track.kind === 'audio') {
+      console.log(`${langContext} ✅ OpenAI audio track received - setting up audio stream`);
       
-      if (e.track.kind === 'audio') {
-        console.log(`${langContext} Track details:`, {
-          id: e.track.id,
-          enabled: e.track.enabled,
-          muted: e.track.muted,
-          readyState: e.track.readyState,
-          label: e.track.label
-        });
+      // Get the stream - OpenAI pattern
+      const stream = e.streams[0];
+      
+      // Store in connection immediately
+      const connection = openAIConnectionsByLanguage.get(language);
+      if (connection) {
+        connection.audioStream = stream;
         
-        console.log(`${langContext} ✅ OpenAI audio track successfully received - attendees will now hear translations!`);
-        
-        const stream = e.streams[0];
-        console.log(`${langContext} Stream details:`, {
-          id: stream.id,
-          active: stream.active,
-          trackCount: stream.getTracks().length
-        });
-
-        // Store the stream for forwarding to attendees - with enhanced error handling
-        let connection = openAIConnectionsByLanguage.get(language);
-        
-        if (!connection) {
-          console.error(`${langContext} ❌ CRITICAL: No OpenAI connection found for language ${language} - cannot store audio stream!`);
-          console.error(`${langContext} ❌ Available languages: ${Array.from(openAIConnectionsByLanguage.keys()).join(', ')}`);
-          
-          // CRITICAL FIX: Create connection if missing with proper initialization
-          console.log(`${langContext} 🔄 Creating missing connection for language ${language}`);
-          connection = {
-            pc: openaiPC,
-            dc: openaiDC,
-            audioStream: stream,
-            microphoneTracks: [],
-            audioElement: document.createElement('audio')
-          };
-          
-          // Store the new connection
-          openAIConnectionsByLanguage.set(language, connection);
-          console.log(`${langContext} ✅ Created and stored new connection with audio stream`);
-          
-          // Set up the audio element for the new connection
-          const audioElement = connection.audioElement;
-          if (audioElement) {
-            audioElement.autoplay = true;
-            audioElement.controls = true;
-            audioElement.muted = false;
-            audioElement.volume = 1.0;
-            audioElement.style.display = 'block';
-            audioElement.style.width = '100%';
-            audioElement.setAttribute('data-language', language);
-            
-            console.log(`${langContext} Setting audio element srcObject to stream`);
-            audioElement.srcObject = stream;
-          }
-        } else {
-          console.log(`${langContext} ✅ Found existing connection for ${language}, storing audio stream`);
-          connection.audioStream = stream;
-          
-          // Verify storage
-          if (connection.audioStream) {
-            console.log(`${langContext} ✅ Audio stream successfully stored in connection`);
-          } else {
-            console.error(`${langContext} ❌ Failed to store audio stream in connection!`);
-          }
+        // Set audio element source - OpenAI pattern
+        if (connection.audioElement) {
+          connection.audioElement.srcObject = stream;
+          console.log(`${langContext} ✅ Audio stream connected to audio element`);
         }
-      } else {
-        console.log(`${langContext} Received non-audio track: ${e.track.kind}`);
-      }
-    } catch (error) {
-      console.error(`${langContext} ❌ Error in ontrack handler:`, error);
-      console.error(`${langContext} ❌ This error prevented audio stream from being stored!`);
-
-      // Try to store the stream anyway if we have it
-      if (e.track.kind === 'audio' && e.streams.length > 0) {
-        try {
-          const stream = e.streams[0];
-          const connection = openAIConnectionsByLanguage.get(language);
-          if (connection) {
-            connection.audioStream = stream;
-            console.log(`${langContext} ⚠️ Audio stream stored despite error in handler`);
-          }
-        } catch (fallbackError) {
-          console.error(`${langContext} ❌ Fallback stream storage also failed:`, fallbackError);
-        }
+        
+        // Forward audio to attendees immediately
+        forwardAudioToAttendees(language, stream);
+        
+        console.log(`${langContext} ✅ Audio stream stored and forwarded - attendees will now receive translations`);
       }
     }
   };
 
-  // Set the original handler directly since we removed the translation monitor
-  openaiPC.ontrack = originalOnTrackHandler;
-
-  // Add debugging for peer connection state and receivers
+  // Simple connection state monitoring - no redundant receiver checking
   openaiPC.onconnectionstatechange = () => {
     console.log(`${langContext} 🔗 OpenAI connection state changed to: ${openaiPC.connectionState}`);
-
-    // When connected, check for receivers
+    
     if (openaiPC.connectionState === 'connected') {
-      console.log(`${langContext} 🔍 Checking for receivers after connection established...`);
-      const receivers = openaiPC.getReceivers();
-      console.log(`${langContext} 🔍 Found ${receivers.length} receivers`);
-
-      receivers.forEach((receiver, index) => {
-        console.log(`${langContext} 🔍 Receiver ${index}:`, {
-          track: receiver.track ? {
-            id: receiver.track.id,
-            kind: receiver.track.kind,
-            enabled: receiver.track.enabled,
-            muted: receiver.track.muted,
-            readyState: receiver.track.readyState
-          } : 'no track'
-        });
-
-        // If we find an audio track, manually trigger our handler
-        if (receiver.track && receiver.track.kind === 'audio') {
-          console.log(`${langContext} 🎵 Found audio track in receiver, manually creating stream...`);
-          const stream = new MediaStream([receiver.track]);
-
-          // Store the stream manually since ontrack didn't fire
-          const connection = openAIConnectionsByLanguage.get(language);
-          if (connection && !connection.audioStream) {
-            console.log(`${langContext} 🔄 Manually storing audio stream from receiver...`);
-            connection.audioStream = stream;
-            console.log(`${langContext} ✅ Audio stream manually stored: id=${stream.id}, tracks=${stream.getTracks().length}`);
-          }
-        }
-      });
+      console.log(`${langContext} ✅ OpenAI WebRTC connection established - ready for audio reception`);
     }
   };
 
@@ -1254,28 +1142,7 @@ async function setupOpenAIConnection(
       throw new Error(`WebSocket signaling required for ${language} - HTTP polling disabled to ensure ICE candidate delivery`);
     }
 
-    // Start periodic check for audio receivers (in case ontrack doesn't fire)
-    const receiverCheckInterval = setInterval(() => {
-      const connection = openAIConnectionsByLanguage.get(language);
-      if (connection && !connection.audioStream && openaiPC.connectionState === 'connected') {
-        console.log(`${langContext} 🔍 Periodic check: Looking for audio receivers...`);
-        const receivers = openaiPC.getReceivers();
-
-        for (const receiver of receivers) {
-          if (receiver.track && receiver.track.kind === 'audio' && receiver.track.readyState === 'live') {
-            console.log(`${langContext} 🎵 Found live audio track in periodic check!`);
-            const stream = new MediaStream([receiver.track]);
-            connection.audioStream = stream;
-            console.log(`${langContext} ✅ Audio stream stored from periodic check: id=${stream.id}`);
-            clearInterval(receiverCheckInterval);
-            break;
-          }
-        }
-      } else if (connection && connection.audioStream) {
-        // Audio stream found, stop checking
-        clearInterval(receiverCheckInterval);
-      }
-    }, 1000); // Check every second
+    // No periodic receiver checking needed - ontrack handler will handle audio reception
 
     return {
       pc: openaiPC,
