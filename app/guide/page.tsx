@@ -6,7 +6,10 @@ import LanguageSelector from "@/components/LanguageSelector"
 import TranslationOutput from "@/components/TranslationOutput"
 import TourControls from "@/components/TourControls"
 import AttendeeList from "@/components/AttendeeList"
+import AudioSystemStatus from "@/components/AudioSystemStatus"
 import { initGuideWebRTC, cleanupGuideWebRTC, toggleMicrophoneMute } from "@/lib/guideWebRTC"
+import { initializeEmergencyAudioSystem } from "@/lib/emergencyAudioFix"
+import "@/lib/audioDebugConsole"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -242,6 +245,16 @@ export default function GuidePage() {
         try {
           await initGuideWebRTC(handleTranslationUpdate, normalizedLanguage, handleAttendeeUpdates, tourData.tourId, tourData.tourCode)
           console.log(`WebRTC initialized for ${normalizedLanguage}`);
+          
+          // 🚨 EMERGENCY AUDIO FIX: Initialize emergency audio system for this language
+          console.log(`🚨 Initializing emergency audio system for ${normalizedLanguage}...`);
+          const audioFixSuccess = await initializeEmergencyAudioSystem(normalizedLanguage);
+          
+          if (audioFixSuccess) {
+            console.log(`✅ Emergency audio system ready for ${normalizedLanguage}`);
+          } else {
+            console.warn(`⚠️ Emergency audio system failed for ${normalizedLanguage} - audio may not work`);
+          }
         } catch (error) {
           console.error(`Failed to initialize WebRTC for ${normalizedLanguage}:`, error);
           initializationErrors.push({ language: normalizedLanguage, error });
@@ -780,6 +793,14 @@ export default function GuidePage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Audio System Status - Emergency Architecture Fix */}
+            {isTourActive && (
+              <AudioSystemStatus 
+                languages={selectedLanguages} 
+                isActive={isTourActive} 
+              />
+            )}
 
             {/* Performance Metrics */}
             {isTourActive && (

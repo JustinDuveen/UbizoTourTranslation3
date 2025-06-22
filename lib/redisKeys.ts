@@ -128,5 +128,5 @@ export function getAlternativeOfferKeys(tourId: string, language: string): strin
   ];
 
   // Remove duplicates and the primary key (which will be checked first)
-  return [...new Set(alternatives)].filter(key => key !== primaryKey);
+  return Array.from(new Set(alternatives)).filter(key => key !== primaryKey);
 }
