@@ -119,6 +119,12 @@ export default function AudioSystemStatus({ languages, isActive }: AudioSystemSt
 
   const handleEmergencyFix = async (language: string) => {
     try {
+      // EXPERT FIX: Check if emergency system is enabled
+      if (process.env.NEXT_PUBLIC_ENABLE_EMERGENCY_AUDIO !== 'true') {
+        console.log('🚫 Emergency audio system disabled by default - main system should handle audio');
+        return;
+      }
+      
       const emergencySystem = (window as any).emergencyAudioSystem;
       if (emergencySystem) {
         console.log(`🚨 Triggering emergency fix for ${language}...`);

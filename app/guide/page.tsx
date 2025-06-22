@@ -246,14 +246,18 @@ export default function GuidePage() {
           await initGuideWebRTC(handleTranslationUpdate, normalizedLanguage, handleAttendeeUpdates, tourData.tourId, tourData.tourCode)
           console.log(`WebRTC initialized for ${normalizedLanguage}`);
           
-          // 🚨 EMERGENCY AUDIO FIX: Initialize emergency audio system for this language
-          console.log(`🚨 Initializing emergency audio system for ${normalizedLanguage}...`);
-          const audioFixSuccess = await initializeEmergencyAudioSystem(normalizedLanguage);
-          
-          if (audioFixSuccess) {
-            console.log(`✅ Emergency audio system ready for ${normalizedLanguage}`);
+          // EXPERT FIX: Emergency audio system is DEFAULT OFF - only enable with env variable
+          if (process.env.NEXT_PUBLIC_ENABLE_EMERGENCY_AUDIO === 'true') {
+            console.log(`🚨 Initializing emergency audio system for ${normalizedLanguage} (enabled via env var)...`);
+            const audioFixSuccess = await initializeEmergencyAudioSystem(normalizedLanguage);
+            
+            if (audioFixSuccess) {
+              console.log(`✅ Emergency audio system ready for ${normalizedLanguage}`);
+            } else {
+              console.warn(`⚠️ Emergency audio system failed for ${normalizedLanguage} - audio may not work`);
+            }
           } else {
-            console.warn(`⚠️ Emergency audio system failed for ${normalizedLanguage} - audio may not work`);
+            console.log(`✅ Emergency audio system disabled by default - main system handling audio for ${normalizedLanguage}`);
           }
         } catch (error) {
           console.error(`Failed to initialize WebRTC for ${normalizedLanguage}:`, error);

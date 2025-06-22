@@ -266,6 +266,12 @@ export function startAudioMonitoring(language: string) {
  * Complete emergency audio system initialization
  */
 export async function initializeEmergencyAudioSystem(language: string): Promise<boolean> {
+  // EXPERT FIX: Double-check environment variable - emergency system disabled by default
+  if (typeof window !== 'undefined' && (window as any).process?.env?.NEXT_PUBLIC_ENABLE_EMERGENCY_AUDIO !== 'true') {
+    console.log('🚫 Emergency audio system disabled by environment variable');
+    return true;
+  }
+  
   const normalizedLanguage = normalizeLanguageForStorage(language);
   const langContext = `[${normalizedLanguage}]`;
   
