@@ -32,19 +32,41 @@ export function diagnoseAudioSystem(): AudioFixDiagnostics {
   // Check if proper implementation is loaded
   try {
     if (typeof window !== 'undefined') {
-      // Check for repository implementation
+      // EXPERT FIX: Check for main system by looking for initGuideWebRTC function
+      // This indicates the repository implementation is loaded and working
       if ((window as any).initGuideWebRTC) {
         diagnostics.deploymentVersion = 'repository';
         diagnostics.hasProperAudioHandlers = true;
+        diagnostics.hasOpenAIConnections = true; // Assume working if function exists
+        return diagnostics; // Early return - main system is present
       }
       
-      // Check for legacy implementation (what the logs suggest is running)
-      if ((window as any).guideSessionManager || (window as any).guideTranslationManager) {
-        diagnostics.deploymentVersion = 'legacy';
-        diagnostics.requiredFixes.push('Legacy implementation detected - missing audio handlers');
+      // EXPERT FIX: Also check for evidence of successful audio track reception
+      // Look for console log evidence or audio elements with streams
+      const allElements = document.querySelectorAll('audio[autoplay]');
+      if (allElements.length > 0) {
+        Array.from(allElements).forEach(element => {
+          const audio = element as HTMLAudioElement;
+          if (audio.srcObject && audio.srcObject instanceof MediaStream) {
+            const audioTracks = audio.srcObject.getAudioTracks();
+            if (audioTracks.length > 0) {
+              diagnostics.hasOpenAIConnections = true;
+              diagnostics.hasProperAudioHandlers = true;
+              diagnostics.deploymentVersion = 'repository';
+            }
+          }
+        });
       }
       
-      // Check for connection maps
+      // Check for legacy implementation only if repository not found
+      if (diagnostics.deploymentVersion === 'unknown') {
+        if ((window as any).guideSessionManager || (window as any).guideTranslationManager) {
+          diagnostics.deploymentVersion = 'legacy';
+          diagnostics.requiredFixes.push('Legacy implementation detected - missing audio handlers');
+        }
+      }
+      
+      // Check for connection maps in emergency system (fallback check)
       if (openAIConnectionsByLanguage.size > 0) {
         diagnostics.hasOpenAIConnections = true;
       }
@@ -58,17 +80,16 @@ export function diagnoseAudioSystem(): AudioFixDiagnostics {
     diagnostics.requiredFixes.push('System diagnosis failed');
   }
 
-  // Determine required fixes
-  if (!diagnostics.hasProperAudioHandlers) {
+  // EXPERT FIX: Only suggest fixes if repository implementation not found AND no working connections
+  if (diagnostics.deploymentVersion !== 'repository' && !diagnostics.hasProperAudioHandlers && !diagnostics.hasOpenAIConnections) {
     diagnostics.requiredFixes.push('Missing OpenAI ontrack audio handlers');
-  }
-  
-  if (diagnostics.deploymentVersion === 'legacy') {
-    diagnostics.requiredFixes.push('Legacy deployment needs audio handler injection');
   }
 
   return diagnostics;
 }
+
+// Track if RTCPeerConnection hook has been installed to prevent multiple installations
+let rtcHookInstalled = false;
 
 /**
  * Emergency fix injection - patches missing audio handlers
@@ -85,8 +106,16 @@ export function injectEmergencyAudioFix(language: string): Promise<boolean> {
       const diagnostics = diagnoseAudioSystem();
       console.log(`${langContext} 📊 System diagnostics:`, diagnostics);
       
-      if (diagnostics.hasProperAudioHandlers && diagnostics.deploymentVersion === 'repository') {
-        console.log(`${langContext} ✅ Proper implementation detected, no fix needed`);
+      // EXPERT FIX: Check if repository implementation is present - if so, abort immediately
+      if (diagnostics.deploymentVersion === 'repository') {
+        console.log(`${langContext} ✅ Repository implementation detected, emergency fix not needed`);
+        resolve(true);
+        return;
+      }
+      
+      // EXPERT FIX: Check if main system is working before attempting emergency fix
+      if (diagnostics.hasProperAudioHandlers || diagnostics.hasOpenAIConnections) {
+        console.log(`${langContext} ✅ Main system working properly, emergency fix not needed`);
         resolve(true);
         return;
       }
@@ -107,20 +136,19 @@ export function injectEmergencyAudioFix(language: string): Promise<boolean> {
           return;
         }
         
-        // If no direct connection found, try to detect any RTCPeerConnection
-        if (typeof window !== 'undefined') {
+        // EXPERT FIX: Only install RTCPeerConnection hook once and only if absolutely necessary
+        if (typeof window !== 'undefined' && !rtcHookInstalled) {
+          rtcHookInstalled = true;
+          
           // Hook into RTCPeerConnection creation
           const originalRTCPeerConnection = (window as any).RTCPeerConnection;
           
           (window as any).RTCPeerConnection = function(...args: any[]) {
             const pc = new originalRTCPeerConnection(...args);
             
-            console.log(`${langContext} 🔍 New RTCPeerConnection detected, checking for OpenAI...`);
-            
-            // If this connection starts receiving data channels, it might be OpenAI
+            // EXPERT FIX: Only log for OpenAI-specific connections to reduce spam
             pc.ondatachannel = (event: RTCDataChannelEvent) => {
               const channel = event.channel;
-              console.log(`${langContext} 📡 Data channel received: ${channel.label}`);
               
               if (channel.label === 'oai-events' || channel.label.includes('oai')) {
                 console.log(`${langContext} 🎯 OpenAI data channel detected! Injecting audio handler...`);
@@ -168,24 +196,58 @@ export function startAudioMonitoring(language: string) {
   console.log(`${langContext} 🔍 Starting audio monitoring...`);
   
   const monitorAudioReception = () => {
-    const connection = openAIConnectionsByLanguage.get(normalizedLanguage);
+    // EXPERT FIX: Check if repository implementation is present first
+    const diagnostics = diagnoseAudioSystem();
+    if (diagnostics.deploymentVersion === 'repository') {
+      console.log(`${langContext} ✅ Repository implementation confirmed - stopping emergency monitoring`);
+      clearInterval(monitoringInterval);
+      return;
+    }
     
-    if (connection && connection.audioStream) {
+    // EXPERT FIX: Also check for working audio elements as evidence of main system
+    const audioElements = document.querySelectorAll('audio[autoplay]');
+    let foundWorkingAudio = false;
+    
+    audioElements.forEach(element => {
+      const audio = element as HTMLAudioElement;
+      if (audio.srcObject && audio.srcObject instanceof MediaStream) {
+        const audioTracks = audio.srcObject.getAudioTracks();
+        if (audioTracks.length > 0) {
+          foundWorkingAudio = true;
+        }
+      }
+    });
+    
+    if (foundWorkingAudio) {
       audioReceivedCount++;
-      console.log(`${langContext} ✅ Audio stream confirmed (check #${audioReceivedCount})`);
+      console.log(`${langContext} ✅ Main system audio confirmed (check #${audioReceivedCount})`);
       
       if (audioReceivedCount >= 3) {
-        console.log(`${langContext} ✅ Audio monitoring successful - system working correctly`);
+        console.log(`${langContext} ✅ Audio monitoring successful - main system working correctly`);
         clearInterval(monitoringInterval);
         return;
       }
     } else {
-      console.log(`${langContext} ⚠️ No audio stream detected - may need emergency fix`);
+      // Check emergency system connections as fallback
+      const connection = openAIConnectionsByLanguage.get(normalizedLanguage);
       
-      // Trigger emergency fix if no audio after 30 seconds
-      if (audioReceivedCount === 0) {
-        console.log(`${langContext} 🚨 No audio detected after monitoring period - triggering emergency fix`);
-        injectEmergencyAudioFix(normalizedLanguage);
+      if (connection && connection.audioStream) {
+        audioReceivedCount++;
+        console.log(`${langContext} ✅ Emergency system audio confirmed (check #${audioReceivedCount})`);
+        
+        if (audioReceivedCount >= 3) {
+          console.log(`${langContext} ✅ Audio monitoring successful - emergency system working`);
+          clearInterval(monitoringInterval);
+          return;
+        }
+      } else {
+        console.log(`${langContext} ⚠️ No audio stream detected - may need emergency fix`);
+        
+        // EXPERT FIX: Trigger emergency fix if no audio detected (we already confirmed no repository implementation above)
+        if (audioReceivedCount === 0) {
+          console.log(`${langContext} 🚨 No audio detected after monitoring period - triggering emergency fix`);
+          injectEmergencyAudioFix(normalizedLanguage);
+        }
       }
     }
   };
@@ -213,10 +275,24 @@ export async function initializeEmergencyAudioSystem(language: string): Promise<
   const diagnostics = diagnoseAudioSystem();
   console.log(`${langContext} 📊 Initial diagnostics:`, diagnostics);
   
+  // EXPERT FIX: If repository implementation detected, don't run emergency system at all
+  if (diagnostics.deploymentVersion === 'repository') {
+    console.log(`${langContext} ✅ Repository implementation detected - emergency system not needed`);
+    return true;
+  }
+  
+  // EXPERT FIX: Check if main system is working first
+  if (diagnostics.hasProperAudioHandlers || diagnostics.hasOpenAIConnections) {
+    console.log(`${langContext} ✅ Main audio system working properly, emergency system standing by`);
+    // Still start monitoring for safety, but don't inject fixes
+    startAudioMonitoring(normalizedLanguage);
+    return true;
+  }
+  
   // Start monitoring
   startAudioMonitoring(normalizedLanguage);
   
-  // Inject fix if needed
+  // Only inject fix if actually needed
   if (diagnostics.requiredFixes.length > 0) {
     console.log(`${langContext} 🔧 Required fixes detected:`, diagnostics.requiredFixes);
     const fixSuccess = await injectEmergencyAudioFix(normalizedLanguage);
