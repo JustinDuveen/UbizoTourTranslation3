@@ -340,7 +340,10 @@ export async function initGuideWebRTC(
 
   const connection = await setupOpenAIConnection(normalizedLanguage, setTranslation, setAttendees, tourId, signalingClient);
   if (connection) {
-    openAIConnectionsByLanguage.set(normalizedLanguage, connection);
+    // Check if connection was already stored (timing fix)
+    if (!openAIConnectionsByLanguage.has(normalizedLanguage)) {
+      openAIConnectionsByLanguage.set(normalizedLanguage, connection);
+    }
     console.log(`${langContext} Guide WebRTC initialized successfully`);
   } else {
     console.error(`${langContext} Failed to initialize Guide WebRTC`);
@@ -823,6 +826,22 @@ async function setupOpenAIConnection(
   audioElement.setAttribute('data-language', language);
   console.log(`${langContext} Created audio element for OpenAI audio reception`);
 
+  // CRITICAL FIX: Store connection object BEFORE ontrack handler can fire
+  const connectionObj = {
+    pc: openaiPC,
+    dc: openaiDC,
+    audioMonitor,
+    statsCollector,
+    audioElement,
+    audioStream: undefined, // Will be set by ontrack handler
+    microphoneTracks: microphoneTracks,
+    signalingClient: signalingClient
+  };
+  
+  // Store connection immediately to prevent timing issues
+  openAIConnectionsByLanguage.set(language, connectionObj);
+  console.log(`${langContext} ✅ Connection object stored - ready for ontrack audio reception`);
+
   // Set up connection state monitoring
   openaiPC.oniceconnectionstatechange = () => {
     console.log(`${langContext} ICE connection state: ${openaiPC.iceConnectionState}`);
@@ -844,21 +863,36 @@ async function setupOpenAIConnection(
       const stream = e.streams[0];
       
       // Store in connection immediately
-      const connection = openAIConnectionsByLanguage.get(language);
-      if (connection) {
+      let connection = openAIConnectionsByLanguage.get(language);
+      
+      if (!connection) {
+        // FALLBACK: Create connection if timing issue occurred
+        console.log(`${langContext} 🔄 Creating missing connection object for audio reception`);
+        connection = {
+          pc: openaiPC,
+          dc: openaiDC,
+          audioMonitor,
+          statsCollector,
+          audioElement,
+          audioStream: stream,
+          microphoneTracks: microphoneTracks,
+          signalingClient: signalingClient
+        };
+        openAIConnectionsByLanguage.set(language, connection);
+      } else {
         connection.audioStream = stream;
-        
-        // Set audio element source - OpenAI pattern
-        if (connection.audioElement) {
-          connection.audioElement.srcObject = stream;
-          console.log(`${langContext} ✅ Audio stream connected to audio element`);
-        }
-        
-        // Forward audio to attendees immediately
-        forwardAudioToAttendees(language, stream);
-        
-        console.log(`${langContext} ✅ Audio stream stored and forwarded - attendees will now receive translations`);
       }
+      
+      // Set audio element source - OpenAI pattern
+      if (connection.audioElement) {
+        connection.audioElement.srcObject = stream;
+        console.log(`${langContext} ✅ Audio stream connected to audio element`);
+      }
+      
+      // Forward audio to attendees immediately
+      forwardAudioToAttendees(language, stream);
+      
+      console.log(`${langContext} ✅ Audio stream stored and forwarded - attendees will now receive translations`);
     }
   };
 
@@ -1144,16 +1178,8 @@ async function setupOpenAIConnection(
 
     // No periodic receiver checking needed - ontrack handler will handle audio reception
 
-    return {
-      pc: openaiPC,
-      dc: openaiDC,
-      audioMonitor,
-      statsCollector,
-      audioElement,
-      audioStream: undefined, // Will be set by ontrack handler when audio is received
-      microphoneTracks: microphoneTracks, // Include microphone tracks for proper cleanup
-      signalingClient: signalingClient, // Store signaling client for cleanup
-    };
+    // Return the connection object that was already stored
+    return connectionObj;
 
   } catch (error) {
     console.error(`${langContext} Error during OpenAI WebRTC setup:`, error);

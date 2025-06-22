@@ -96,7 +96,7 @@ export function injectEmergencyAudioFix(language: string): Promise<boolean> {
       
       // Wait for OpenAI connection to be available
       const checkForConnection = () => {
-        // Look for any RTCPeerConnection that might be the OpenAI connection
+        // Check for stored OpenAI connection
         const connections = openAIConnectionsByLanguage.get(normalizedLanguage);
         
         // If we have a connection, inject the audio handler
