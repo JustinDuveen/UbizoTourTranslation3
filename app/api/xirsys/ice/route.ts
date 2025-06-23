@@ -11,9 +11,13 @@ interface CachedICEResponse {
   iceServers: any[];
   timestamp: number;
   expiresAt: number;
+  tourId?: string;
+  serverInstance?: string; // Track specific server instance (turn7, turn8, etc)
 }
 
 let serverCache: CachedICEResponse | null = null;
+// Tour-specific server cache to ensure same instance per tour
+const tourServerCache = new Map<string, CachedICEResponse>();
 
 /**
  * GET /api/xirsys/ice
@@ -22,10 +26,10 @@ let serverCache: CachedICEResponse | null = null;
 export async function GET(request: NextRequest) {
   console.log('[XIRSYS-API] ICE server request received');
 
-  // WEBRTC FIX: Get tour session info for consistent server assignment
+  // EXPERT FIX: Get tour session info for guaranteed server instance consistency
   const { searchParams } = new URL(request.url);
   const tourId = searchParams.get('tourId');
-  const sessionKey = tourId ? `tour_ice_${tourId}` : null;
+  const forceRefresh = searchParams.get('forceRefresh') === 'true';
 
   try {
     // Check environment variables
@@ -46,42 +50,82 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check cache first
     const cacheDuration = parseInt(process.env.XIRSYS_CACHE_DURATION || '3600000'); // 1 hour
-    if (serverCache && Date.now() < serverCache.expiresAt) {
-      console.log('[XIRSYS-API] Returning cached ICE servers');
+    
+    // CRITICAL FIX: Tour-specific server consistency check
+    if (tourId && !forceRefresh) {
+      const tourCache = tourServerCache.get(tourId);
+      
+      if (tourCache && Date.now() < tourCache.expiresAt) {
+        console.log(`[XIRSYS-API] ✅ Returning tour-cached ICE servers for ${tourId} (server: ${tourCache.serverInstance})`);
+        return NextResponse.json({
+          success: true,
+          iceServers: tourCache.iceServers,
+          cached: true,
+          tourSpecific: true,
+          expiresIn: tourCache.expiresAt - Date.now(),
+          tourId: tourId,
+          serverInstance: tourCache.serverInstance
+        });
+      }
+      
+      // Extended cache for tour consistency (6 hours instead of 1 hour)
+      if (tourCache && Date.now() < (tourCache.expiresAt + 21600000)) {
+        console.log(`[XIRSYS-API] ⚡ Using EXTENDED tour cache for consistency: ${tourId} (server: ${tourCache.serverInstance})`);
+        return NextResponse.json({
+          success: true,
+          iceServers: tourCache.iceServers,
+          cached: true,
+          extended: true,
+          tourSpecific: true,
+          tourId: tourId,
+          serverInstance: tourCache.serverInstance
+        });
+      }
+    }
+
+    // Fallback to global cache for non-tour requests
+    if (!tourId && serverCache && Date.now() < serverCache.expiresAt && !forceRefresh) {
+      console.log('[XIRSYS-API] Returning global cached ICE servers');
       return NextResponse.json({
         success: true,
         iceServers: serverCache.iceServers,
         cached: true,
         expiresIn: serverCache.expiresAt - Date.now(),
-        tourId: tourId || 'global'
-      });
-    }
-
-    // WEBRTC FIX: For tour sessions, extend cache lifetime to ensure consistency
-    if (sessionKey && serverCache && Date.now() < (serverCache.expiresAt + 900000)) { // Extra 15min for tours
-      console.log(`[XIRSYS-API] Using extended cache for tour session consistency: ${tourId}`);
-      return NextResponse.json({
-        success: true,
-        iceServers: serverCache.iceServers,
-        cached: true,
-        extended: true,
-        tourId: tourId || 'global'
+        tourId: 'global'
       });
     }
 
     // Fetch from Xirsys API using the exact code provided
-    console.log('[XIRSYS-API] Fetching fresh ICE servers from Xirsys...');
+    console.log(`[XIRSYS-API] Fetching fresh ICE servers from Xirsys... ${tourId ? `(for tour: ${tourId})` : '(global)'}`);
     
     const iceServers = await fetchXirsysICEServers(channel, username, apiKey, endpoint);
     
-    // Cache the response
-    serverCache = {
+    // EXPERT FIX: Extract server instance for consistency tracking
+    const serverInstance = extractServerInstance(iceServers);
+    console.log(`[XIRSYS-API] 🎯 Detected server instance: ${serverInstance}`);
+    
+    const cacheEntry = {
       iceServers,
       timestamp: Date.now(),
-      expiresAt: Date.now() + cacheDuration
+      expiresAt: Date.now() + cacheDuration,
+      tourId: tourId || undefined,
+      serverInstance
     };
+    
+    // Store in appropriate cache
+    if (tourId) {
+      // Tour-specific cache with extended lifetime for consistency
+      tourServerCache.set(tourId, {
+        ...cacheEntry,
+        expiresAt: Date.now() + (cacheDuration * 6) // 6x longer for tours
+      });
+      console.log(`[XIRSYS-API] 🔒 Cached servers for tour ${tourId} (instance: ${serverInstance}) - expires in ${(cacheDuration * 6) / 1000 / 60} minutes`);
+    } else {
+      // Global cache
+      serverCache = cacheEntry;
+      console.log(`[XIRSYS-API] 📦 Cached servers globally (instance: ${serverInstance})`);
+    }
 
     console.log(`[XIRSYS-API] ✅ Successfully fetched ${iceServers.length} ICE servers`);
 
@@ -89,15 +133,35 @@ export async function GET(request: NextRequest) {
       success: true,
       iceServers,
       cached: false,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      tourId: tourId || 'global',
+      serverInstance,
+      message: tourId ? `Server locked for tour ${tourId}` : 'Global server assignment'
     });
 
   } catch (error) {
     console.error('[XIRSYS-API] ❌ Error fetching ICE servers:', error);
 
-    // Return cached data if available (even if expired)
+    // Try tour-specific cache first if available
+    if (tourId) {
+      const tourCache = tourServerCache.get(tourId);
+      if (tourCache) {
+        console.warn(`[XIRSYS-API] Returning tour-cached data for ${tourId} due to error (server: ${tourCache.serverInstance})`);
+        return NextResponse.json({
+          success: true,
+          iceServers: tourCache.iceServers,
+          cached: true,
+          expired: true,
+          tourSpecific: true,
+          serverInstance: tourCache.serverInstance,
+          error: 'Using tour-cached data due to API error'
+        });
+      }
+    }
+
+    // Fallback to global cache
     if (serverCache) {
-      console.warn('[XIRSYS-API] Returning expired cached data due to error');
+      console.warn('[XIRSYS-API] Returning global cached data due to error');
       return NextResponse.json({
         success: true,
         iceServers: serverCache.iceServers,
@@ -117,6 +181,45 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * EXPERT FIX: Extracts server instance identifier from ICE server URLs
+ * This ensures we can track which Xirsys server instance we're using
+ */
+function extractServerInstance(iceServers: any[]): string {
+  if (!iceServers || iceServers.length === 0) {
+    return 'unknown';
+  }
+
+  try {
+    // Look for TURN server URLs which contain the instance identifier
+    for (const server of iceServers) {
+      if (server.urls) {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        
+        for (const url of urls) {
+          if (typeof url === 'string' && url.includes('turn:')) {
+            // Extract server instance from URL like "turn:fr-turn7.xirsys.com:80"
+            const match = url.match(/turn:.*?-turn(\d+)\.xirsys\.com/);
+            if (match && match[1]) {
+              return `turn${match[1]}`;
+            }
+            
+            // Fallback: extract hostname
+            const hostnameMatch = url.match(/turn:([^:]+)/);
+            if (hostnameMatch && hostnameMatch[1]) {
+              return hostnameMatch[1];
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[XIRSYS-API] Error extracting server instance:', error);
+  }
+
+  return 'unknown';
 }
 
 /**
@@ -250,10 +353,31 @@ async function fetchXirsysICEServers(
 export async function POST(request: NextRequest) {
   console.log('[XIRSYS-API] Cache clear request received');
   
-  serverCache = null;
+  const { searchParams } = new URL(request.url);
+  const tourId = searchParams.get('tourId');
   
-  return NextResponse.json({
-    success: true,
-    message: 'Cache cleared successfully'
-  });
+  if (tourId) {
+    // Clear specific tour cache
+    const hadCache = tourServerCache.delete(tourId);
+    console.log(`[XIRSYS-API] ${hadCache ? 'Cleared' : 'No cache found for'} tour ${tourId}`);
+    
+    return NextResponse.json({
+      success: true,
+      message: `Tour cache cleared for ${tourId}`,
+      tourId
+    });
+  } else {
+    // Clear all caches
+    const tourCount = tourServerCache.size;
+    serverCache = null;
+    tourServerCache.clear();
+    
+    console.log(`[XIRSYS-API] Cleared global cache and ${tourCount} tour caches`);
+    
+    return NextResponse.json({
+      success: true,
+      message: `All caches cleared (global + ${tourCount} tours)`,
+      clearedTours: tourCount
+    });
+  }
 }

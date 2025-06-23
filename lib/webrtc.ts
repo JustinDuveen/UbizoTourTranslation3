@@ -403,11 +403,16 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
   const langContext = `[${language}]`;
   console.log(`${langContext} Creating peer connection...`);
 
+  // EXPERT FIX: Get tourId for consistent server assignment
+  const tourId = localStorage.getItem('currentTourId');
+  console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId || tourCode}`);
+
   // Create peer connection with Xirsys configuration (same as guide)
   let pc: RTCPeerConnection;
 
   try {
-    const xirsysServers = await getXirsysICEServers();
+    // CRITICAL FIX: Pass tourId to ensure same server instance as Guide
+    const xirsysServers = await getXirsysICEServers(tourId || tourCode);
     if (xirsysServers && xirsysServers.length > 0) {
       // Check if we have TURN servers
       const hasTurn = xirsysServers.some(server => {

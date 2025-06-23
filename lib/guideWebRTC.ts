@@ -539,9 +539,10 @@ async function setupOpenAIConnection(
   try {
     console.log(`${langContext} [GUIDE-OPENAI-ICE] Fetching Xirsys ICE servers for OpenAI connection...`);
 
-    // Import and fetch Xirsys servers
+    // EXPERT FIX: Import and fetch Xirsys servers with tour consistency
     const { getXirsysICEServers, createXirsysRTCConfiguration } = await import('./xirsysConfig');
-    const xirsysServers = await getXirsysICEServers();
+    console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId}`);
+    const xirsysServers = await getXirsysICEServers(tourId);
 
     if (xirsysServers && xirsysServers.length > 0) {
       console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for OpenAI connection`);
@@ -1722,9 +1723,10 @@ async function createAttendeeConnection(
   try {
     console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Fetching Xirsys ICE servers for attendee ${attendeeId} connection...`);
 
-    // Import and fetch Xirsys servers
+    // EXPERT FIX: Import and fetch Xirsys servers with tour consistency 
     const { getXirsysICEServers, createXirsysRTCConfiguration } = await import('./xirsysConfig');
-    const xirsysServers = await getXirsysICEServers();
+    console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId}`);
+    const xirsysServers = await getXirsysICEServers(tourId);
 
     if (xirsysServers && xirsysServers.length > 0) {
       console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for attendee ${attendeeId} (ENHANCED CANDIDATES)`);

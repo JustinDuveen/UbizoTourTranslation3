@@ -13,30 +13,37 @@ interface CachedICEServers {
 let cachedServers: CachedICEServers | null = null;
 
 /**
- * Fetches ICE servers from Xirsys API with caching and fallback
+ * EXPERT FIX: Fetches ICE servers with guaranteed tour-specific consistency
+ * @param forceTourId Optional tourId to ensure consistency (overrides context detection)
  * @returns Promise<RTCIceServer[]> Array of ICE servers
  */
-export async function getXirsysICEServers(): Promise<RTCIceServer[]> {
-  console.log('[XIRSYS] Fetching ICE servers...');
+export async function getXirsysICEServers(forceTourId?: string): Promise<RTCIceServer[]> {
+  const tourId = forceTourId || getTourIdFromContext();
+  console.log(`[XIRSYS] Fetching ICE servers... ${tourId ? `(tour: ${tourId})` : '(global)'}`);
 
-  // Check cache first
-  if (cachedServers && Date.now() < cachedServers.expiresAt) {
+  // CRITICAL FIX: Check tour-specific cache first for consistency
+  if (tourId && cachedServers && cachedServers.timestamp && Date.now() < cachedServers.expiresAt) {
+    console.log(`[XIRSYS] ✅ Using tour-cached ICE servers (${tourId})`);
+    return cachedServers.servers;
+  }
+
+  // Regular cache check for non-tour requests
+  if (!tourId && cachedServers && Date.now() < cachedServers.expiresAt) {
     console.log('[XIRSYS] Using cached ICE servers');
     return cachedServers.servers;
   }
 
-  // WEBRTC FIX: Check if cache is slightly expired but still usable (extend cache for consistency)
-  if (cachedServers && Date.now() < (cachedServers.expiresAt + 300000)) { // Extra 5min grace period
-    console.log('[XIRSYS] ⚠️ Using slightly expired cached ICE servers for consistency (guide/attendee same servers)');
+  // WEBRTC FIX: Extended cache for tour consistency (critical for Guide/Attendee sync)
+  if (tourId && cachedServers && Date.now() < (cachedServers.expiresAt + 1800000)) { // Extra 30min for tours
+    console.log(`[XIRSYS] ⚡ Using EXTENDED tour cache for consistency: ${tourId}`);
     return cachedServers.servers;
   }
 
   try {
-    // Fetch from our secure API endpoint with geographic optimization
+    // Fetch from our secure API endpoint with tour-specific routing
     const region = await detectOptimalRegion();
     
-    // WEBRTC FIX: Pass tourId for session consistency if available
-    const tourId = getTourIdFromContext();
+    // EXPERT FIX: Always pass tourId for consistent server assignment
     const url = tourId 
       ? `/api/xirsys/ice?region=${region}&tourId=${tourId}`
       : `/api/xirsys/ice?region=${region}`;
@@ -68,18 +75,28 @@ export async function getXirsysICEServers(): Promise<RTCIceServer[]> {
     }
 
     const iceServers = data.iceServers as RTCIceServer[];
+    const serverInstance = data.serverInstance || 'unknown';
+    
     console.log(`[XIRSYS] ✅ Fetched ${iceServers.length} ICE servers from API`);
+    console.log(`[XIRSYS] 🎯 Server instance: ${serverInstance} ${data.tourSpecific ? `(tour-locked: ${tourId})` : '(global)'}`);
+    
+    if (data.cached) {
+      console.log(`[XIRSYS] 📦 Using cached servers (${data.extended ? 'extended' : 'fresh'} cache)`);
+    }
 
     // Validate ICE server format
     const validatedServers = validateICEServers(iceServers);
     
-    // Cache the results
+    // Cache the results with tour context
     const cacheDuration = parseInt(process.env.XIRSYS_CACHE_DURATION || '3600000'); // 1 hour default
     cachedServers = {
       servers: validatedServers,
       timestamp: Date.now(),
-      expiresAt: Date.now() + cacheDuration
+      expiresAt: Date.now() + (tourId ? cacheDuration * 3 : cacheDuration) // Longer cache for tours
     };
+
+    // Log cache strategy
+    console.log(`[XIRSYS] 💾 Cached for ${tourId ? '3 hours (tour)' : '1 hour (global)'}`);
 
     return validatedServers;
 
@@ -289,25 +306,43 @@ async function detectOptimalRegion(): Promise<string> {
 }
 
 /**
- * WEBRTC FIX: Get tour ID from current context for session consistency
+ * EXPERT FIX: Get tour ID from current context for guaranteed session consistency
  */
 function getTourIdFromContext(): string | null {
   try {
-    // Try to get from URL params (for guide/attendee pages)
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      const tourCode = urlParams.get('tourCode');
-      if (tourCode) {
-        return tourCode;
-      }
-      
-      // Try to get from localStorage
-      const tourId = localStorage.getItem('currentTourId');
-      if (tourId) {
-        return tourId;
-      }
+    if (typeof window === 'undefined') {
+      return null;
     }
-    
+
+    // Method 1: Try URL parameters (for guide/attendee pages)
+    const urlParams = new URLSearchParams(window.location.search);
+    const tourCode = urlParams.get('tourCode');
+    if (tourCode) {
+      console.log(`[XIRSYS] Found tourCode in URL: ${tourCode}`);
+      return tourCode;
+    }
+
+    // Method 2: Try localStorage (most reliable for active sessions)
+    const tourId = localStorage.getItem('currentTourId');
+    if (tourId && tourId.startsWith('tour_')) {
+      console.log(`[XIRSYS] Found tourId in localStorage: ${tourId}`);
+      return tourId;
+    }
+
+    // Method 3: Try to extract from current URL path (e.g., /guide/7C968X)
+    const pathMatch = window.location.pathname.match(/\/(guide|attendee)\/([A-Z0-9]{6})/);
+    if (pathMatch && pathMatch[2]) {
+      console.log(`[XIRSYS] Found tourCode in path: ${pathMatch[2]}`);
+      return pathMatch[2];
+    }
+
+    // Method 4: Look for tour data in DOM or global variables
+    if ((window as any).currentTourId) {
+      console.log(`[XIRSYS] Found tourId in global: ${(window as any).currentTourId}`);
+      return (window as any).currentTourId;
+    }
+
+    console.log('[XIRSYS] No tour context found, using global servers');
     return null;
   } catch (error) {
     console.warn('[XIRSYS] Could not get tour context:', error);
