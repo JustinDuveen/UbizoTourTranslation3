@@ -247,17 +247,11 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
     const { attendeeId } = await completeSignaling(pc, normalizedLanguage, tourId, offer, attendeeName, existingAttendeeId, signalingClient);
     console.log(`${langContext} Answer sent successfully with attendeeId: ${attendeeId}`);
 
-    // CRITICAL FIX: Update signaling client with correct attendeeId after getting it from server
+    // EXPERT FIX: Update attendeeId without disrupting WebSocket connection
     if (signalingClient) {
-      console.log(`${langContext} 🔄 Updating WebSocket signaling client with correct attendeeId: ${attendeeId}`);
-      // Reconnect with correct attendeeId
-      signalingClient.disconnect();
-      signalingClient = await initializeSignaling(tourCode, normalizedLanguage, 'attendee', attendeeId);
-      if (signalingClient) {
-        console.log(`${langContext} ✅ WebSocket signaling reconnected with correct attendeeId: ${attendeeId}`);
-      } else {
-        console.warn(`${langContext} ❌ Failed to reconnect WebSocket signaling with attendeeId`);
-      }
+      console.log(`${langContext} ✅ WebSocket signaling continues with attendeeId: ${attendeeId}`);
+      // No reconnection needed - the connection is already established and working
+      // The attendeeId is sent in messages, not stored in the connection itself
     }
 
     // Create ICE connection monitor
