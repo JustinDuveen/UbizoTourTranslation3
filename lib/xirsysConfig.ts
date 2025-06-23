@@ -23,8 +23,17 @@ export async function getXirsysICEServers(forceTourId?: string): Promise<RTCIceS
 
   // CRITICAL FIX: Check tour-specific cache first for consistency
   if (tourId && cachedServers && cachedServers.timestamp && Date.now() < cachedServers.expiresAt) {
-    console.log(`[XIRSYS] ✅ Using tour-cached ICE servers (${tourId})`);
-    return cachedServers.servers;
+    // EXPERT FIX: Check cache age - if > 5 minutes, force fresh fetch for server consistency
+    const cacheAge = Date.now() - cachedServers.timestamp;
+    const fiveMinutes = 5 * 60 * 1000;
+    
+    if (cacheAge > fiveMinutes) {
+      console.log(`[XIRSYS] ⚠️ Cache is ${Math.round(cacheAge / 1000 / 60)}min old - forcing fresh fetch for server consistency`);
+      cachedServers = null; // Clear stale cache
+    } else {
+      console.log(`[XIRSYS] ✅ Using tour-cached ICE servers (${tourId})`);
+      return cachedServers.servers;
+    }
   }
 
   // Regular cache check for non-tour requests

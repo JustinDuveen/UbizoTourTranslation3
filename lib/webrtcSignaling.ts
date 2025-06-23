@@ -64,6 +64,7 @@ class WebRTCSignalingClient {
   private onOfferHandler?: (offer: RTCSessionDescriptionInit, fromAttendeeId?: string) => void;
   private onAnswerHandler?: (answer: RTCSessionDescriptionInit, fromAttendeeId?: string) => void;
   private onConnectionStateHandler?: (connected: boolean) => void;
+  private onIceServerConfigHandler?: (iceServerConfig: any) => void;
 
   constructor() {
     this.setupEventHandlers();
@@ -154,6 +155,12 @@ class WebRTCSignalingClient {
       } else {
         this.attemptReconnect();
       }
+    });
+
+    // EXPERT FIX: Handle ICE server configuration from guide
+    this.socket.on('ice-server-config', (message: any) => {
+      console.log(`[${this.language}] 📡 Received ICE server config from ${message.sender} (instance: ${message.data.serverInstance})`);
+      this.onIceServerConfigHandler?.(message.data);
     });
 
     this.socket.on('ice-candidate', (message: SignalingMessage) => {
@@ -278,6 +285,35 @@ class WebRTCSignalingClient {
         console.log(`[${this.language}] ✅ Already reconnected, canceling scheduled attempt ${this.reconnectAttempts}`);
       }
     }, delay);
+  }
+
+  /**
+   * EXPERT FIX: Send ICE server configuration to attendee for guaranteed consistency
+   */
+  async sendIceServerConfig(attendeeId: string, iceServerConfig: any): Promise<boolean> {
+    if (!this.socket || !this.isConnected) {
+      console.warn(`[${this.language}] Cannot send ICE server config - not connected`);
+      return false;
+    }
+
+    try {
+      const message = {
+        type: 'ice-server-config',
+        data: iceServerConfig,
+        tourId: this.tourId,
+        language: this.language,
+        attendeeId: attendeeId,
+        sender: this.role,
+        timestamp: Date.now()
+      };
+
+      this.socket.emit('ice-server-config', message);
+      console.log(`[${this.language}] 📡 ICE server config sent to attendee ${attendeeId} (instance: ${iceServerConfig.serverInstance})`);
+      return true;
+    } catch (error) {
+      console.error(`[${this.language}] Error sending ICE server config:`, error);
+      return false;
+    }
   }
 
   /**
@@ -645,6 +681,13 @@ class WebRTCSignalingClient {
    */
   onConnectionState(handler: (connected: boolean) => void): void {
     this.onConnectionStateHandler = handler;
+  }
+
+  /**
+   * EXPERT FIX: Set ICE server config handler for attendees
+   */
+  onIceServerConfig(handler: (iceServerConfig: any) => void): void {
+    this.onIceServerConfigHandler = handler;
   }
 
   /**

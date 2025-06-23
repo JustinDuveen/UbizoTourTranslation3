@@ -1,6 +1,6 @@
 // Simplified Attendee WebRTC - Aligned with Guide Implementation
 import { getXirsysICEServers, createXirsysRTCConfiguration } from './xirsysConfig';
-import { initializeSignaling, cleanupSignaling } from './webrtcSignaling';
+import { initializeSignaling, cleanupSignaling, getSignalingClient } from './webrtcSignaling';
 import { createICEMonitor, type ICETimeoutEvent } from './iceConnectionMonitor';
 import { normalizeLanguageForStorage } from './languageUtils';
 import { validateAttendeeId, validateTourConnectionParams } from './parameterValidation';
@@ -407,18 +407,44 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
   const tourId = localStorage.getItem('currentTourId');
   console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId || tourCode}`);
 
-  // Create peer connection with Xirsys configuration (same as guide)
+  // EXPERT FIX: Create peer connection with coordinated ICE servers
   let pc: RTCPeerConnection;
+  let iceServersFromGuide: any = null;
+  
+  // Listen for ICE server config from guide
+  const signalingClient = getSignalingClient();
+  if (signalingClient) {
+    signalingClient.onIceServerConfig((iceServerConfig: any) => {
+      console.log(`${langContext} 📡 Received ICE server config from guide (instance: ${iceServerConfig.serverInstance})`);
+      iceServersFromGuide = iceServerConfig.xirsysServers;
+      
+      // If we already have a peer connection, we'll need to restart ICE
+      if (pc && pc.connectionState !== 'closed') {
+        console.log(`${langContext} 🔄 Restarting ICE with guide's server configuration`);
+        pc.restartIce();
+      }
+    });
+  }
 
   try {
-    // CRITICAL FIX: Pass tourId to ensure same server instance as Guide
-    const xirsysServers = await getXirsysICEServers(tourId || tourCode);
+    let xirsysServers: any[];
+    
+    // EXPERT FIX: Use guide's ICE servers if available, otherwise fetch independently
+    if (iceServersFromGuide) {
+      xirsysServers = iceServersFromGuide;
+      console.log(`${langContext} [ATTENDEE-ICE-COORDINATION] Using ICE servers from guide coordination`);
+    } else {
+      // Fallback: fetch independently (for backwards compatibility)
+      console.log(`${langContext} [ATTENDEE-ICE-COORDINATION] No guide coordination yet, fetching independently`);
+      xirsysServers = await getXirsysICEServers(tourId || tourCode);
+    }
+    
     if (xirsysServers && xirsysServers.length > 0) {
       // DEBUGGING: Log server details to verify TURN servers are present
-      console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Received ${xirsysServers.length} Xirsys servers:`);
+      console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Using ${xirsysServers.length} Xirsys servers:`);
       xirsysServers.forEach((server, index) => {
         const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        urls.forEach(url => {
+        urls.forEach((url: string) => {
           const serverType = url.toLowerCase().startsWith('turn:') ? 'TURN' : 
                            url.toLowerCase().startsWith('stun:') ? 'STUN' : 'UNKNOWN';
           console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Server ${index + 1}: ${serverType} - ${url}`);
@@ -431,7 +457,7 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
       // Check if we have TURN servers
       const hasTurn = xirsysServers.some(server => {
         const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        return urls.some(url => url.toLowerCase().startsWith('turn:'));
+        return urls.some((url: string) => url.toLowerCase().startsWith('turn:'));
       });
       
       if (!hasTurn) {
@@ -457,7 +483,7 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
       }
       
       pc = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers));
-      console.log(`${langContext} Using ${xirsysServers.length} ICE servers (${hasTurn ? 'with' : 'without'} TURN)`);
+      console.log(`${langContext} Using ${xirsysServers.length} ICE servers (${hasTurn ? 'with' : 'without'} TURN) - ${iceServersFromGuide ? 'coordinated' : 'independent'}`);
     } else {
       throw new Error('No Xirsys servers available');
     }

@@ -4,6 +4,35 @@ import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/
 import { forwardAudioToAttendees } from "@/lib/audioHandlerFix";
 import { getXirsysICEServers, createXirsysRTCConfiguration } from "@/lib/xirsysConfig";
 
+// Helper function to extract server instance from ICE servers
+function extractServerInstance(iceServers: any[]): string {
+  if (!iceServers || iceServers.length === 0) {
+    return 'unknown';
+  }
+
+  try {
+    for (const server of iceServers) {
+      if (server.urls) {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        
+        for (const url of urls) {
+          if (typeof url === 'string' && url.includes('turn:')) {
+            // Extract server instance from URL like "turn:fr-turn7.xirsys.com:80"
+            const match = url.match(/turn:.*?-turn(\d+)\.xirsys\.com/);
+            if (match && match[1]) {
+              return `turn${match[1]}`;
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[GUIDE] Error extracting server instance:', error);
+  }
+
+  return 'unknown';
+}
+
 // Audio monitoring and connection handling classes
 class AudioMonitor {
   private audioContext: AudioContext;
@@ -1748,6 +1777,26 @@ async function createAttendeeConnection(
       });
       
       console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for attendee ${attendeeId} (TURN: ${hasTurnServers ? 'present' : 'missing'})`);
+      
+      // EXPERT FIX: Send ICE server config to attendee via signaling for consistency
+      const iceServerConfig = {
+        xirsysServers: xirsysServers,
+        timestamp: Date.now(),
+        serverInstance: extractServerInstance(xirsysServers)
+      };
+      
+      // Send ICE configuration to attendee through signaling
+      try {
+        const signalingClient = getSignalingClient();
+        if (signalingClient) {
+          await signalingClient.sendIceServerConfig(attendeeId, iceServerConfig);
+          console.log(`${langContext} [GUIDE-ICE-COORDINATION] Sent ICE server config to attendee ${attendeeId} (instance: ${iceServerConfig.serverInstance})`);
+        } else {
+          console.warn(`${langContext} [GUIDE-ICE-COORDINATION] No signaling client available for coordination`);
+        }
+      } catch (error) {
+        console.warn(`${langContext} [GUIDE-ICE-COORDINATION] Failed to send ICE server config:`, error);
+      }
       
       // DEBUGGING: Log server details to verify TURN servers are present
       xirsysServers.forEach((server, index) => {
