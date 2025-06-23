@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false, // Disabled for WebRTC testing
+  // Force cache bust for dynamic import fix
+  generateBuildId: async () => {
+    return `build-${Date.now()}`
+  },
   // Development optimizations
   experimental: {
     optimizeCss: false,
