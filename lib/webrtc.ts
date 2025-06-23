@@ -414,6 +414,20 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
     // CRITICAL FIX: Pass tourId to ensure same server instance as Guide
     const xirsysServers = await getXirsysICEServers(tourId || tourCode);
     if (xirsysServers && xirsysServers.length > 0) {
+      // DEBUGGING: Log server details to verify TURN servers are present
+      console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Received ${xirsysServers.length} Xirsys servers:`);
+      xirsysServers.forEach((server, index) => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        urls.forEach(url => {
+          const serverType = url.toLowerCase().startsWith('turn:') ? 'TURN' : 
+                           url.toLowerCase().startsWith('stun:') ? 'STUN' : 'UNKNOWN';
+          console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Server ${index + 1}: ${serverType} - ${url}`);
+          if (serverType === 'TURN') {
+            console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] TURN credentials: username=${server.username ? 'present' : 'missing'}, credential=${server.credential ? 'present' : 'missing'}`);
+          }
+        });
+      });
+      
       // Check if we have TURN servers
       const hasTurn = xirsysServers.some(server => {
         const urls = Array.isArray(server.urls) ? server.urls : [server.urls];

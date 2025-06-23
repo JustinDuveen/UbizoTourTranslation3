@@ -545,7 +545,19 @@ async function setupOpenAIConnection(
     const xirsysServers = await getXirsysICEServers(tourId);
 
     if (xirsysServers && xirsysServers.length > 0) {
-      console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for OpenAI connection`);
+      // CRITICAL FIX: Validate that we have TURN servers with credentials
+      const hasTurnServers = xirsysServers.some(server => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        const hasTurnUrl = urls.some(url => url.toLowerCase().startsWith('turn:'));
+        return hasTurnUrl && server.username && server.credential;
+      });
+      
+      console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for OpenAI connection (TURN: ${hasTurnServers ? 'present' : 'missing'})`);
+      
+      if (!hasTurnServers) {
+        console.warn(`${langContext} [GUIDE-OPENAI-ICE] ⚠️ No valid TURN servers in cached config - this may cause connectivity issues`);
+      }
+      
       openaiPC = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers));
     } else {
       throw new Error('No Xirsys servers available');
@@ -1729,7 +1741,32 @@ async function createAttendeeConnection(
     const xirsysServers = await getXirsysICEServers(tourId);
 
     if (xirsysServers && xirsysServers.length > 0) {
-      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for attendee ${attendeeId} (ENHANCED CANDIDATES)`);
+      // CRITICAL FIX: Validate that we have TURN servers with credentials
+      const hasTurnServers = xirsysServers.some(server => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        const hasTurnUrl = urls.some(url => url.toLowerCase().startsWith('turn:'));
+        return hasTurnUrl && server.username && server.credential;
+      });
+      
+      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for attendee ${attendeeId} (TURN: ${hasTurnServers ? 'present' : 'missing'})`);
+      
+      // DEBUGGING: Log server details to verify TURN servers are present
+      xirsysServers.forEach((server, index) => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        urls.forEach(url => {
+          const serverType = url.toLowerCase().startsWith('turn:') ? 'TURN' : 
+                           url.toLowerCase().startsWith('stun:') ? 'STUN' : 'UNKNOWN';
+          console.log(`${langContext} [GUIDE-SERVER-DEBUG] Server ${index + 1}: ${serverType} - ${url}`);
+          if (serverType === 'TURN') {
+            console.log(`${langContext} [GUIDE-SERVER-DEBUG] TURN credentials: username=${server.username ? 'present' : 'missing'}, credential=${server.credential ? 'present' : 'missing'}`);
+          }
+        });
+      });
+      
+      if (!hasTurnServers) {
+        console.warn(`${langContext} [GUIDE-ATTENDEE-ICE] ⚠️ No valid TURN servers in cached config - this may cause connectivity issues with attendee ${attendeeId}`);
+      }
+      
       // Use enhanced candidate generation for better connectivity
       attendeePC = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers, false));
     } else {

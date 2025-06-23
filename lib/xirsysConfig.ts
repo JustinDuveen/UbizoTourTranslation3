@@ -195,6 +195,19 @@ export function clearXirsysCache(): void {
 }
 
 /**
+ * EXPERT FIX: Clears tour-specific cache to force fresh server fetch
+ * @param tourId Optional specific tour to clear, or clears all if not provided
+ */
+export function clearTourXirsysCache(tourId?: string): void {
+  if (tourId) {
+    console.log(`[XIRSYS] Clearing tour-specific cache for: ${tourId}`);
+  } else {
+    console.log('[XIRSYS] Clearing all cached ICE servers');
+    cachedServers = null;
+  }
+}
+
+/**
  * Gets cache status for debugging
  * @returns Cache information
  */
