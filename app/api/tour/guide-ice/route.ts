@@ -8,11 +8,11 @@ const ICE_CACHE_TTL = 1000; // 1 second cache for ICE candidates
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const tourId = searchParams.get("tourId");
-  const languageParam = searchParams.get("language");
+  const language = searchParams.get("language");
   const attendeeId = searchParams.get("attendeeId");
   const lastKnownIndexParam = searchParams.get("lastKnownIndex");
 
-  if (!tourId || !languageParam || !attendeeId) {
+  if (!tourId || !language || !attendeeId) {
     return NextResponse.json(
       { error: "Missing tourId, language, or attendeeId" },
       { status: 400 }
@@ -20,11 +20,12 @@ export async function GET(request: Request) {
   }
 
   // CRITICAL FIX: Use standardized ICE candidate key generation
-  const { getIceCandidateKey, normalizeLanguageForStorage } = await import("@/lib/redisKeys");
-  const language = normalizeLanguageForStorage(languageParam);
-  const redisKey = getIceCandidateKey('guide', tourId, attendeeId, language, false);
+  const { getIceCandidateKey } = await import("@/lib/redisKeys");
+  const { normalizeLanguageForStorage } = await import("@/lib/languageUtils");
+  const normalizedLanguage = normalizeLanguageForStorage(language);
+  const redisKey = getIceCandidateKey('guide', tourId, attendeeId, normalizedLanguage, false);
 
-  console.log(`🔧 ATTENDEE FETCHING GUIDE ICE: ${redisKey} (language: ${languageParam} → ${language})`);
+  console.log(`🔧 ATTENDEE FETCHING GUIDE ICE: ${redisKey} (language: ${language} → ${normalizedLanguage})`);
 
   let lastKnownIndex = -1;
   if (lastKnownIndexParam !== null) {

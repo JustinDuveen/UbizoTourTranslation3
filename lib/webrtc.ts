@@ -3,6 +3,48 @@ import { getXirsysICEServers, createXirsysRTCConfiguration } from './xirsysConfi
 import { initializeSignaling, cleanupSignaling } from './webrtcSignaling';
 import { createICEMonitor, type ICETimeoutEvent } from './iceConnectionMonitor';
 import { normalizeLanguageForStorage } from './languageUtils';
+import { validateAttendeeId, validateTourConnectionParams } from './parameterValidation';
+import type { TourConnectionParams } from './types/audio';
+
+// EXPERT FIX: Enhanced attendeeId management with validation
+function getOrCreateAttendeeId(
+  tourId: string, 
+  language: string, 
+  existingAttendeeId?: string, 
+  langContext?: string
+): string {
+  if (existingAttendeeId) {
+    validateAttendeeId(existingAttendeeId, langContext);
+    console.log(`${langContext} 🔄 REUSING existing attendeeId for reconnection: ${existingAttendeeId}`);
+    return existingAttendeeId;
+  }
+
+  const storageKey = `attendeeId_${tourId}_${language}`;
+  const storedAttendeeId = localStorage.getItem(storageKey);
+  
+  if (storedAttendeeId && storedAttendeeId.startsWith('attendee_')) {
+    try {
+      validateAttendeeId(storedAttendeeId, langContext);
+      console.log(`${langContext} 📦 RESTORED attendeeId from localStorage: ${storedAttendeeId}`);
+      return storedAttendeeId;
+    } catch (error) {
+      console.warn(`${langContext} ⚠️ Stored attendeeId validation failed, generating new one:`, error);
+      localStorage.removeItem(storageKey);
+    }
+  }
+
+  // Generate new attendeeId with enhanced format validation
+  const timestamp = Date.now();
+  const randomSuffix = Math.random().toString(36).substring(2, 9); // 7 chars for better uniqueness
+  const newAttendeeId = `attendee_${timestamp}_${randomSuffix}`;
+  
+  validateAttendeeId(newAttendeeId, langContext);
+  localStorage.setItem(storageKey, newAttendeeId);
+  console.log(`${langContext} ✨ GENERATED new attendeeId: ${newAttendeeId}`);
+  console.log(`${langContext} 💾 Stored attendeeId in localStorage for future reconnections`);
+  
+  return newAttendeeId;
+}
 
 interface AttendeeConnection {
   pc: RTCPeerConnection;
@@ -27,16 +69,24 @@ const RECONNECTION_CONFIG = {
   BACKOFF_FACTOR: 2
 };
 
+// EXPERT FIX: Enhanced WebRTC initialization interface with strict typing
 interface WebRTCOptions {
-  onTranslation: (text: string) => void;
-  language: string;
-  tourCode: string;
-  attendeeName: string;
-  signal?: AbortSignal;
-  existingAttendeeId?: string; // CRITICAL FIX: Allow passing existing attendee ID for reconnections
+  readonly onTranslation: (text: string) => void;
+  readonly language: string;
+  readonly tourCode: string;
+  readonly attendeeName: string;
+  readonly signal?: AbortSignal;
+  readonly existingAttendeeId?: string;
 }
 
-export async function initWebRTC(options: WebRTCOptions) {
+interface WebRTCConnectionResult {
+  readonly success: boolean;
+  readonly attendeeId: string;
+  readonly connectionState: 'connected' | 'failed' | 'timeout';
+  readonly error?: string;
+}
+
+export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnectionResult> {
   const { onTranslation, language, tourCode, attendeeName, signal, existingAttendeeId } = options;
   // Ensure language is normalized to lowercase for consistent key storage
   const normalizedLanguage = normalizeLanguageForStorage(language);
@@ -231,18 +281,37 @@ export async function initWebRTC(options: WebRTCOptions) {
       cleanupConnection(normalizedLanguage);
     });
 
+    // EXPERT FIX: Return successful connection result
+    return {
+      success: true,
+      attendeeId: attendeeId,
+      connectionState: 'connected' as const,
+    };
+
   } catch (error) {
     console.error(`${langContext} WebRTC initialization error:`, error);
     
     if (error instanceof Error && error.message === 'PLACEHOLDER_OFFER_RECEIVED') {
       console.log(`${langContext} Placeholder offer received, will retry later`);
+      return {
+        success: false,
+        attendeeId: 'unknown',
+        connectionState: 'failed' as const,
+        error: 'Placeholder offer received - guide not ready'
+      };
     }
 
     // Clean up any partial connections
     if (connections.has(normalizedLanguage)) {
       cleanupConnection(normalizedLanguage);
     }
-    throw error;
+    
+    return {
+      success: false,
+      attendeeId: 'unknown', 
+      connectionState: 'failed' as const,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
   }
 }
 
@@ -950,30 +1019,8 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
   const langContext = `[${language}]`;
   console.log(`${langContext} Completing signaling...`);
 
-  // CRITICAL FIX: Reuse existing attendee ID during reconnections to maintain ICE candidate consistency
-  let attendeeId: string;
-
-  if (existingAttendeeId) {
-    // Reuse the existing attendee ID during reconnection
-    attendeeId = existingAttendeeId;
-    console.log(`${langContext} 🔄 REUSING existing attendeeId for reconnection: ${attendeeId}`);
-  } else {
-    // Check if we have a stored attendee ID from a previous session
-    const storedAttendeeId = localStorage.getItem(`attendeeId_${tourId}_${language}`);
-
-    if (storedAttendeeId) {
-      attendeeId = storedAttendeeId;
-      console.log(`${langContext} 📦 RESTORED attendeeId from localStorage: ${attendeeId}`);
-    } else {
-      // Generate new attendee ID only if none exists
-      attendeeId = `attendee_${Date.now()}_${Math.random().toString(36).substring(2,7)}`;
-      console.log(`${langContext} ✨ GENERATED new attendeeId: ${attendeeId}`);
-
-      // Store the new attendee ID for future reconnections
-      localStorage.setItem(`attendeeId_${tourId}_${language}`, attendeeId);
-      console.log(`${langContext} 💾 Stored attendeeId in localStorage for future reconnections`);
-    }
-  }
+  // EXPERT FIX: Enhanced attendeeId persistence with validation and cleanup
+  const attendeeId = getOrCreateAttendeeId(tourId, language, existingAttendeeId, langContext);
 
   // Validate and set remote description
   const offer = validateAndFormatSDP(offerData);

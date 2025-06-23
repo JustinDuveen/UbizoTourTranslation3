@@ -61,9 +61,11 @@ export async function GET(request: Request) {
   try {
     console.log(`Getting Redis client for join request`);
 
-    // Get and validate tourId
+    // Get and validate tourId using utility function
     console.log(`Looking up tourId for code: ${tourCode}`);
-    const tourId = await redisClient.get(`tour_codes:${tourCode}`);
+    const { getTourCodeKey } = await import("@/lib/redisKeys");
+    const tourCodeKey = getTourCodeKey(tourCode);
+    const tourId = await redisClient.get(tourCodeKey);
     console.log(`TourId lookup result: ${tourId}`);
 
     if (!tourId) {
@@ -108,17 +110,16 @@ export async function GET(request: Request) {
       }, { status: 404 });
     }
 
-    // Validate language support
+    // Validate language support using utility function
     console.log(`Checking if language ${language} is supported for tour ${tourId}`);
-    const isSupported = await redisClient.sismember(
-      `tour:${tourId}:supported_languages`,
-      language
-    );
+    const { getSupportedLanguagesKey } = await import("@/lib/redisKeys");
+    const supportedLanguagesKey = getSupportedLanguagesKey(tourId);
+    const isSupported = await redisClient.sismember(supportedLanguagesKey, language);
     console.log(`Language support check result: ${isSupported}`);
 
     if (!isSupported) {
       console.log(`Language ${language} not supported for tour ${tourId}`);
-      const supportedLangs = await redisClient.smembers(`tour:${tourId}:supported_languages`);
+      const supportedLangs = await redisClient.smembers(supportedLanguagesKey);
       console.log(`Supported languages: ${JSON.stringify(supportedLangs)}`);
       return NextResponse.json(
         {

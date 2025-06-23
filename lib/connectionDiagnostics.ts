@@ -4,7 +4,7 @@
  */
 
 import { getRedisClient } from './redis';
-import { normalizeLanguageForStorage } from './redisKeys';
+import { normalizeLanguageForStorage } from './languageUtils';
 
 export interface DiagnosticResult {
   timestamp: string;

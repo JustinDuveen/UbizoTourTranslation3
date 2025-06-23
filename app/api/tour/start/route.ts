@@ -91,8 +91,10 @@ export async function POST(request: Request) {
     console.log(`Setting primary language ${primaryLanguageKey} to ${normalizedPrimaryLang}`);
     await redis.set(primaryLanguageKey, normalizedPrimaryLang);
 
-    // Store tour info in Redis
-    await redis.set(`tour:${tourId}`, JSON.stringify({
+    // Store tour info in Redis using utility function  
+    const { getTourKey } = await import("@/lib/redisKeys");
+    const tourKey = getTourKey(tourId);
+    await redis.set(tourKey, JSON.stringify({
       guideId: user.id,
       startTime: new Date().toISOString(),
       status: "active",
@@ -124,12 +126,14 @@ export async function POST(request: Request) {
     // Store tour ID in guide's active tours
     await redis.set(`guide:${user.id}:active_tour`, tourId);
 
-    // Store the tourCode to tourId mapping
-    console.log(`Storing tour code mapping: tour_codes:${tourCode} -> ${tourId}`)
-    await redis.set(`tour_codes:${tourCode}`, tourId);
+    // Store the tourCode to tourId mapping using utility function
+    const { getTourCodeKey } = await import("@/lib/redisKeys");
+    const tourCodeKey = getTourCodeKey(tourCode);
+    console.log(`Storing tour code mapping: ${tourCodeKey} -> ${tourId}`)
+    await redis.set(tourCodeKey, tourId);
 
     // Verify the mapping was stored correctly
-    const verifyTourId = await redis.get(`tour_codes:${tourCode}`);
+    const verifyTourId = await redis.get(tourCodeKey);
     console.log(`Verification of tour code mapping: ${verifyTourId === tourId ? 'Success' : 'Failed'}`);
 
     return NextResponse.json({

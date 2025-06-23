@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { verifyToken } from "@/lib/auth";
 import { getRedisClient } from "@/lib/redis";
-import { normalizeLanguageForStorage } from "@/lib/redisKeys";
+import { normalizeLanguageForStorage } from "@/lib/languageUtils";
 
 /**
  * Helper function to extract the user from the request cookies.

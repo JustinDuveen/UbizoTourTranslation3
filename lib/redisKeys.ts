@@ -101,6 +101,33 @@ export function getIceCandidateKey(sender: string, tourId: string, attendeeId: s
 }
 
 /**
+ * Generates a Redis key for tour information
+ * @param tourId The tour ID
+ * @returns The Redis key for tour information
+ */
+export function getTourKey(tourId: string): string {
+  return `tour:${tourId}`;
+}
+
+/**
+ * Generates a Redis key for tour code mapping
+ * @param tourCode The tour code
+ * @returns The Redis key for tour code mapping
+ */
+export function getTourCodeKey(tourCode: string): string {
+  return `tour_codes:${tourCode}`;
+}
+
+/**
+ * Generates a Redis key for guide status
+ * @param tourId The tour ID
+ * @returns The Redis key for guide status
+ */
+export function getGuideStatusKey(tourId: string): string {
+  return `tour:${tourId}:guide_status`;
+}
+
+/**
  * Generates alternative Redis keys for an offer to handle case variations
  * @param tourId The tour ID
  * @param language The original language string (not normalized)

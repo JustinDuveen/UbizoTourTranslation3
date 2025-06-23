@@ -3,7 +3,8 @@
  * Separated from languageUtils.ts to improve compilation performance
  */
 
-import { normalizeLanguageForStorage, getOfferKey } from './redisKeys';
+import { normalizeLanguageForStorage } from './languageUtils';
+import { getOfferKey } from './redisKeys';
 import { isPlaceholderOffer } from './sdpUtils';
 
 /**
