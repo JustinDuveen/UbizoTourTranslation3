@@ -61,6 +61,70 @@ interface AttendeeConnection {
 // Global connections manager - simplified
 const connections = new Map<string, AttendeeConnection>();
 
+// EXPERT DEBUGGING: Global audio debugging helper for browser console access
+declare global {
+  interface Window {
+    debugAttendeeAudio: (language?: string) => void;
+  }
+}
+
+// Expose debug function to browser console
+if (typeof window !== 'undefined') {
+  window.debugAttendeeAudio = (language?: string) => {
+    const langKey = language ? normalizeLanguageForStorage(language) : connections.keys().next().value;
+    
+    if (!langKey) {
+      console.log('🔍 No active attendee connections found');
+      return;
+    }
+    
+    const connection = connections.get(langKey);
+    
+    if (!connection) {
+      console.log('🔍 No active attendee connections found');
+      console.log('Available languages:', Array.from(connections.keys()));
+      return;
+    }
+    
+    const { pc, audioEl, attendeeId, tourCode } = connection;
+    
+    console.log('===== 🔊 ATTENDEE AUDIO DEBUG REPORT =====');
+    console.log('Connection Variables:');
+    console.log('- Language:', langKey);
+    console.log('- TourCode:', tourCode);
+    console.log('- AttendeeId:', attendeeId);
+    
+    console.log('WebRTC States:');
+    console.log('- Connection State:', pc.connectionState);
+    console.log('- ICE Connection State:', pc.iceConnectionState);
+    console.log('- ICE Gathering State:', pc.iceGatheringState);
+    console.log('- Signaling State:', pc.signalingState);
+    
+    console.log('Audio Element:');
+    console.log('- Paused:', audioEl.paused);
+    console.log('- Muted:', audioEl.muted);
+    console.log('- Volume:', audioEl.volume);
+    console.log('- Current Time:', audioEl.currentTime);
+    console.log('- Ready State:', audioEl.readyState);
+    console.log('- Autoplay:', audioEl.autoplay);
+    
+    // Get current stats
+    pc.getStats().then(stats => {
+      console.log('WebRTC Statistics:');
+      stats.forEach(report => {
+        if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+          console.log('- Bytes Received:', report.bytesReceived || 0);
+          console.log('- Packets Received:', report.packetsReceived || 0);
+          console.log('- Audio Level:', report.audioLevel || 'not-available');
+        }
+      });
+    }).catch(err => console.error('Error getting stats:', err));
+    
+    console.log('===== END DEBUG REPORT =====');
+    console.log('💡 Call window.debugAttendeeAudio() again to refresh stats');
+  };
+}
+
 // Reconnection configuration - simplified
 const RECONNECTION_CONFIG = {
   MAX_ATTEMPTS: 5,       // Increased from 3
@@ -231,8 +295,8 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
       iceMonitor
     });
 
-    // Set up media handlers
-    setupMediaHandlers(pc, audioEl, onTranslation, normalizedLanguage);
+    // Set up media handlers with debugging context
+    setupMediaHandlers(pc, audioEl, onTranslation, normalizedLanguage, tourCode, tourId, attendeeId);
 
     // Setup WebSocket handlers for real-time signaling or fall back to polling
     if (signalingClient) {
@@ -600,12 +664,31 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
   return { pc, audioEl };
 }
 
-function setupMediaHandlers(pc: RTCPeerConnection, audioEl: HTMLAudioElement, onTranslation: (text: string) => void, language: string) {
+function setupMediaHandlers(
+  pc: RTCPeerConnection, 
+  audioEl: HTMLAudioElement, 
+  onTranslation: (text: string) => void, 
+  language: string, 
+  tourCode?: string, 
+  tourId?: string, 
+  attendeeId?: string
+) {
   const langContext = `[${language}]`;
+  const normalizedLanguage = normalizeLanguageForStorage(language);
   
-  // EXPERT-LEVEL ontrack handler with comprehensive audio management
+  // EXPERT-LEVEL ontrack handler with comprehensive audio debugging
   pc.ontrack = async (event) => {
     console.log(`${langContext} 🎵 ONTRACK EVENT RECEIVED from Guide! 🎵`);
+    console.log(`${langContext} ===== 🔊 AUDIO DEBUG SESSION START =====`);
+    console.log(`${langContext} KEY VARIABLES FOR DEBUGGING:`);
+    console.log(`${langContext} - tourCode: ${tourCode || 'not-provided'}`);
+    console.log(`${langContext} - tourId: ${tourId || 'not-provided'}`);
+    console.log(`${langContext} - attendeeId: ${attendeeId || 'not-provided'}`);
+    console.log(`${langContext} - displayLanguage: ${language}`);
+    console.log(`${langContext} - normalizedLanguage: ${normalizedLanguage}`);
+    console.log(`${langContext} - WebRTC Connection State: ${pc.connectionState}`);
+    console.log(`${langContext} - ICE Connection State: ${pc.iceConnectionState}`);
+    console.log(`${langContext} - ICE Gathering State: ${pc.iceGatheringState}`);
     console.log(`${langContext} Track details:`, {
       trackKind: event.track.kind,
       trackId: event.track.id,
@@ -685,6 +768,186 @@ function setupMediaHandlers(pc: RTCPeerConnection, audioEl: HTMLAudioElement, on
         }
         
         console.log(`${langContext} ✅ Stream successfully assigned to audio element`);
+
+        // EXPERT AUDIO DEBUGGING: Comprehensive audio flow analysis
+        console.log(`${langContext} ===== 🔍 DETAILED AUDIO ANALYSIS =====`);
+        
+        // 1. Check track states and constraints
+        const audioTrack = event.track;
+        console.log(`${langContext} 🎤 Audio Track Analysis:`);
+        console.log(`${langContext} - Track ID: ${audioTrack.id} (Match expected: ${tourId ? 'Guide-OpenAI-Track' : 'Unknown'})`);
+        console.log(`${langContext} - Ready State: ${audioTrack.readyState} (should be 'live')`);
+        console.log(`${langContext} - Enabled: ${audioTrack.enabled} (should be true)`);
+        console.log(`${langContext} - Muted: ${audioTrack.muted} (should be false)`);
+        console.log(`${langContext} - Label: ${audioTrack.label || 'no-label'}`);
+        
+        // 2. Check stream stats
+        console.log(`${langContext} 🌊 Media Stream Analysis:`);
+        console.log(`${langContext} - Stream ID: ${stream.id}`);
+        console.log(`${langContext} - Stream Active: ${stream.active} (should be true)`);
+        console.log(`${langContext} - Track Count: ${stream.getTracks().length} (should have audio track)`);
+        
+        // 3. Check audio element configuration
+        console.log(`${langContext} 🔊 Audio Element Configuration:`);
+        console.log(`${langContext} - SrcObject Set: ${audioEl.srcObject === stream} (should be true)`);
+        console.log(`${langContext} - Volume: ${audioEl.volume} (should be 1.0)`);
+        console.log(`${langContext} - Muted: ${audioEl.muted} (should be false)`);
+        console.log(`${langContext} - Autoplay: ${audioEl.autoplay} (should be true)`);
+        console.log(`${langContext} - Paused: ${audioEl.paused} (depends on autoplay policy)`);
+        console.log(`${langContext} - ReadyState: ${audioEl.readyState} (higher is better)`);
+        
+        // 4. WebRTC Connection State Analysis
+        console.log(`${langContext} 🔗 WebRTC Connection Analysis:`);
+        console.log(`${langContext} - Connection State: ${pc.connectionState} (should be 'connected')`);
+        console.log(`${langContext} - ICE Connection State: ${pc.iceConnectionState} (should be 'connected' or 'completed')`);
+        console.log(`${langContext} - ICE Gathering State: ${pc.iceGatheringState}`);
+        console.log(`${langContext} - Signaling State: ${pc.signalingState} (should be 'stable')`);
+        
+        // 5. Real-time WebRTC Statistics Analysis
+        setTimeout(async () => {
+          try {
+            const stats = await pc.getStats();
+            console.log(`${langContext} 📊 WebRTC Statistics Analysis:`);
+            
+            stats.forEach(report => {
+              if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+                console.log(`${langContext} 📈 Inbound Audio RTP Stats:`);
+                console.log(`${langContext} - Bytes Received: ${report.bytesReceived || 0}`);
+                console.log(`${langContext} - Packets Received: ${report.packetsReceived || 0}`);
+                console.log(`${langContext} - Packets Lost: ${report.packetsLost || 0}`);
+                console.log(`${langContext} - Audio Level: ${report.audioLevel !== undefined ? report.audioLevel : 'not-available'}`);
+                console.log(`${langContext} - Total Audio Energy: ${report.totalAudioEnergy || 'not-available'}`);
+                console.log(`${langContext} - SSRC: ${report.ssrc}`);
+                
+                if (report.bytesReceived === 0) {
+                  console.error(`${langContext} ❌ NO AUDIO DATA RECEIVED - Check guide's OpenAI connection!`);
+                } else {
+                  console.log(`${langContext} ✅ Audio data flowing from guide (${report.bytesReceived} bytes)`);
+                }
+              }
+              
+              if (report.type === 'media-source' && report.kind === 'audio') {
+                console.log(`${langContext} 🎵 Audio Source Stats:`);
+                console.log(`${langContext} - Audio Level: ${report.audioLevel !== undefined ? report.audioLevel : 'not-available'}`);
+                console.log(`${langContext} - Total Audio Energy: ${report.totalAudioEnergy || 'not-available'}`);
+              }
+              
+              if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                console.log(`${langContext} 🎯 Successful ICE Candidate Pair:`);
+                console.log(`${langContext} - Local Candidate Type: ${report.localCandidateId}`);
+                console.log(`${langContext} - Remote Candidate Type: ${report.remoteCandidateId}`);
+                console.log(`${langContext} - Bytes Sent: ${report.bytesSent || 0}`);
+                console.log(`${langContext} - Bytes Received: ${report.bytesReceived || 0}`);
+              }
+            });
+            
+            // 6. Audio Level Monitoring for the first 10 seconds
+            let audioLevelChecks = 0;
+            const audioLevelMonitor = setInterval(async () => {
+              audioLevelChecks++;
+              
+              try {
+                const currentStats = await pc.getStats();
+                let hasAudioActivity = false;
+                
+                currentStats.forEach(report => {
+                  if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+                    if (report.audioLevel !== undefined && report.audioLevel > 0) {
+                      hasAudioActivity = true;
+                      console.log(`${langContext} 🔊 Audio Level Detected: ${report.audioLevel.toFixed(4)} (Check ${audioLevelChecks}/20)`);
+                    }
+                  }
+                });
+                
+                if (!hasAudioActivity && audioLevelChecks > 5) {
+                  console.warn(`${langContext} ⚠️ No audio activity detected after ${audioLevelChecks} seconds - Guide may not be speaking`);
+                }
+                
+                if (audioLevelChecks >= 20) {
+                  clearInterval(audioLevelMonitor);
+                  console.log(`${langContext} 🏁 Audio level monitoring completed`);
+                }
+              } catch (error) {
+                console.error(`${langContext} Error monitoring audio levels:`, error);
+                clearInterval(audioLevelMonitor);
+              }
+            }, 1000);
+            
+          } catch (error) {
+            console.error(`${langContext} Error getting WebRTC stats:`, error);
+          }
+        }, 2000);
+
+        // 7. EXPERT TROUBLESHOOTING: Common Audio Issues Detection
+        setTimeout(() => {
+          console.log(`${langContext} ===== 🔧 AUDIO TROUBLESHOOTING ANALYSIS =====`);
+          
+          // Check for common audio playback issues
+          const issues: string[] = [];
+          const solutions: string[] = [];
+          
+          if (audioEl.paused) {
+            issues.push("Audio element is paused");
+            solutions.push("User interaction may be required for autoplay");
+          }
+          
+          if (audioEl.muted) {
+            issues.push("Audio element is muted");
+            solutions.push("Audio will not play when muted");
+          }
+          
+          if (audioEl.volume === 0) {
+            issues.push("Audio volume is set to 0");
+            solutions.push("Volume must be > 0 for audio playback");
+          }
+          
+          if (pc.connectionState !== 'connected') {
+            issues.push(`WebRTC connection not fully established (${pc.connectionState})`);
+            solutions.push("Wait for connection to reach 'connected' state");
+          }
+          
+          if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+            issues.push(`ICE connection not established (${pc.iceConnectionState})`);
+            solutions.push("ICE connectivity issues may prevent audio flow");
+          }
+          
+          if (!audioTrack.enabled) {
+            issues.push("Audio track is disabled");
+            solutions.push("Track must be enabled for audio to flow");
+          }
+          
+          if (audioTrack.muted) {
+            issues.push("Audio track is muted at source");
+            solutions.push("Guide may have muted their microphone or OpenAI connection failed");
+          }
+          
+          if (audioTrack.readyState !== 'live') {
+            issues.push(`Audio track not in live state (${audioTrack.readyState})`);
+            solutions.push("Track must be 'live' for real-time audio");
+          }
+          
+          if (issues.length > 0) {
+            console.warn(`${langContext} ⚠️ POTENTIAL AUDIO ISSUES DETECTED:`);
+            issues.forEach((issue, index) => {
+              console.warn(`${langContext} ${index + 1}. ${issue}`);
+              console.info(`${langContext}    💡 Solution: ${solutions[index]}`);
+            });
+            
+            console.log(`${langContext} ===== 🎯 DEBUGGING STEPS FOR USER =====`);
+            console.log(`${langContext} 1. Check browser console for the variables above`);
+            console.log(`${langContext} 2. Verify tourCode matches between Guide and Attendee: ${tourCode}`);
+            console.log(`${langContext} 3. Verify tourId matches: ${tourId}`);
+            console.log(`${langContext} 4. Verify attendeeId is consistent: ${attendeeId}`);
+            console.log(`${langContext} 5. Check if Guide's OpenAI session is active`);
+            console.log(`${langContext} 6. Verify Guide is speaking into microphone`);
+            console.log(`${langContext} 7. Check if browser autoplay is blocked`);
+            console.log(`${langContext} 8. Try user interaction if autoplay failed`);
+          } else {
+            console.log(`${langContext} ✅ No obvious audio issues detected - audio should be working`);
+          }
+          
+          console.log(`${langContext} ===== 🔊 AUDIO DEBUG SESSION END =====`);
+        }, 5000);
       } catch (streamError) {
         console.error(`${langContext} ❌ Failed to assign stream:`, streamError);
         
