@@ -57,16 +57,25 @@ export async function GET(request: NextRequest) {
       const tourCache = tourServerCache.get(tourId);
       
       if (tourCache && Date.now() < tourCache.expiresAt) {
-        console.log(`[XIRSYS-API] ✅ Returning tour-cached ICE servers for ${tourId} (server: ${tourCache.serverInstance})`);
-        return NextResponse.json({
-          success: true,
-          iceServers: tourCache.iceServers,
-          cached: true,
-          tourSpecific: true,
-          expiresIn: tourCache.expiresAt - Date.now(),
-          tourId: tourId,
-          serverInstance: tourCache.serverInstance
-        });
+        // EXPERT FIX: Check if cached servers are too old (>10 minutes) - force refresh for server consistency
+        const cacheAge = Date.now() - tourCache.timestamp;
+        const tenMinutes = 10 * 60 * 1000;
+        
+        if (cacheAge > tenMinutes) {
+          console.log(`[XIRSYS-API] ⚠️ Tour cache is ${Math.round(cacheAge / 1000 / 60)}min old - forcing fresh fetch for server consistency`);
+          // Continue to fresh fetch
+        } else {
+          console.log(`[XIRSYS-API] ✅ Returning tour-cached ICE servers for ${tourId} (server: ${tourCache.serverInstance})`);
+          return NextResponse.json({
+            success: true,
+            iceServers: tourCache.iceServers,
+            cached: true,
+            tourSpecific: true,
+            expiresIn: tourCache.expiresAt - Date.now(),
+            tourId: tourId,
+            serverInstance: tourCache.serverInstance
+          });
+        }
       }
       
       // Extended cache for tour consistency (6 hours instead of 1 hour)
