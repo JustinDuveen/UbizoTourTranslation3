@@ -134,19 +134,8 @@ app.prepare().then(() => {
       }
     });
 
-    // EXPERT FIX: Handle ICE server configuration coordination
-    socket.on('ice-server-config', async (message) => {
-      try {
-        console.log(`[${language}] 📡 Routing ICE server config from ${message.sender} to attendee ${message.attendeeId} (instance: ${message.data.serverInstance})`);
-        
-        // Route to specific attendee in the same room
-        socket.to(room).emit('ice-server-config', message);
-        console.log(`[${language}] ✅ ICE server config routed successfully to room: ${room}`);
-      } catch (error) {
-        console.error(`[${language}] Error handling ICE server config:`, error);
-        socket.emit('error', { message: 'Failed to relay ICE server config' });
-      }
-    });
+    // LEGACY: ICE server coordination (removed - both guide and attendee use static configuration)
+    // No longer needed since both use static jb-turn1.xirsys.com configuration
 
     // Handle disconnection
     socket.on('disconnect', (reason) => {

@@ -13,7 +13,34 @@ interface CachedICEServers {
 let cachedServers: CachedICEServers | null = null;
 
 /**
- * EXPERT FIX: Fetches ICE servers with guaranteed tour-specific consistency
+ * EXPERT FIX: Static TURN server configuration for guaranteed consistency
+ * Both guide and attendee will use identical jb-turn1.xirsys.com server
+ * @returns RTCIceServer[] Static ICE server configuration
+ */
+export function getStaticXirsysICEServers(): RTCIceServer[] {
+  console.log('[XIRSYS] Using static TURN configuration for guaranteed consistency');
+  
+  return [
+    {
+      urls: ["stun:jb-turn1.xirsys.com"]
+    },
+    {
+      username: "92AQP_93tRYeocWcYJW31DPcoY0RWpRRagNO0Yld4wRx3xmvVBVE3FSUIVsR_tbAAAAAAGhZpVV2aXJ0dWFsYWl3b3JrZm9yY2U=",
+      credential: "f1bd2cfa-5064-11f0-8329-0242ac120004",
+      urls: [
+        "turn:jb-turn1.xirsys.com:80?transport=udp",
+        "turn:jb-turn1.xirsys.com:3478?transport=udp", 
+        "turn:jb-turn1.xirsys.com:80?transport=tcp",
+        "turn:jb-turn1.xirsys.com:3478?transport=tcp",
+        "turns:jb-turn1.xirsys.com:443?transport=tcp",
+        "turns:jb-turn1.xirsys.com:5349?transport=tcp"
+      ]
+    }
+  ];
+}
+
+/**
+ * LEGACY: Dynamic ICE server fetching (replaced by static configuration)
  * @param forceTourId Optional tourId to ensure consistency (overrides context detection)
  * @returns Promise<RTCIceServer[]> Array of ICE servers
  */
@@ -238,7 +265,25 @@ export function getXirsysCacheStatus(): {
 }
 
 /**
- * Expert WebRTC configuration optimized for Xirsys infrastructure
+ * EXPERT FIX: Static WebRTC configuration with guaranteed server consistency
+ * @param forceRelay Optional flag to force TURN relay
+ * @returns RTCConfiguration object with static ICE servers
+ */
+export function createStaticXirsysRTCConfiguration(forceRelay: boolean = false): RTCConfiguration {
+  const iceServers = getStaticXirsysICEServers();
+  
+  return {
+    iceServers,
+    // Enhanced WebRTC configuration for reliable connectivity
+    iceCandidatePoolSize: 15, // Always generate more candidates for better connectivity
+    bundlePolicy: 'max-bundle',       // Bundle all media on single transport
+    rtcpMuxPolicy: 'require',         // Multiplex RTP and RTCP for efficiency
+    iceTransportPolicy: forceRelay ? 'relay' : 'all' // Force TURN if needed
+  };
+}
+
+/**
+ * LEGACY: Expert WebRTC configuration optimized for Xirsys infrastructure
  * @param iceServers ICE servers from Xirsys
  * @returns RTCConfiguration object
  */

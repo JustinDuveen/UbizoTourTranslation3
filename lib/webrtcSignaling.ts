@@ -157,11 +157,8 @@ class WebRTCSignalingClient {
       }
     });
 
-    // EXPERT FIX: Handle ICE server configuration from guide
-    this.socket.on('ice-server-config', (message: any) => {
-      console.log(`[${this.language}] 📡 Received ICE server config from ${message.sender} (instance: ${message.data.serverInstance})`);
-      this.onIceServerConfigHandler?.(message.data);
-    });
+    // LEGACY: ICE server configuration handling (removed - static configuration used)
+    // No longer needed since both guide and attendee use static jb-turn1.xirsys.com
 
     this.socket.on('ice-candidate', (message: SignalingMessage) => {
       console.log(`[${this.language}] Received ICE candidate from ${message.sender}${message.attendeeId ? ` (${message.attendeeId})` : ''}`);
@@ -288,33 +285,9 @@ class WebRTCSignalingClient {
   }
 
   /**
-   * EXPERT FIX: Send ICE server configuration to attendee for guaranteed consistency
+   * LEGACY: Send ICE server configuration (removed - static configuration used)
+   * No longer needed since both guide and attendee use static jb-turn1.xirsys.com
    */
-  async sendIceServerConfig(attendeeId: string, iceServerConfig: any): Promise<boolean> {
-    if (!this.socket || !this.isConnected) {
-      console.warn(`[${this.language}] Cannot send ICE server config - not connected`);
-      return false;
-    }
-
-    try {
-      const message = {
-        type: 'ice-server-config',
-        data: iceServerConfig,
-        tourId: this.tourId,
-        language: this.language,
-        attendeeId: attendeeId,
-        sender: this.role,
-        timestamp: Date.now()
-      };
-
-      this.socket.emit('ice-server-config', message);
-      console.log(`[${this.language}] 📡 ICE server config sent to attendee ${attendeeId} (instance: ${iceServerConfig.serverInstance})`);
-      return true;
-    } catch (error) {
-      console.error(`[${this.language}] Error sending ICE server config:`, error);
-      return false;
-    }
-  }
 
   /**
    * Send ICE candidate to remote peer with batching support
@@ -684,11 +657,9 @@ class WebRTCSignalingClient {
   }
 
   /**
-   * EXPERT FIX: Set ICE server config handler for attendees
+   * LEGACY: ICE server config handler (removed - static configuration used)
+   * No longer needed since both guide and attendee use static jb-turn1.xirsys.com
    */
-  onIceServerConfig(handler: (iceServerConfig: any) => void): void {
-    this.onIceServerConfigHandler = handler;
-  }
 
   /**
    * Get connection status

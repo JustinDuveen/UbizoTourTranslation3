@@ -2,36 +2,7 @@ import { executeReplaceOfferTransaction, normalizeLanguageForStorage } from "@/l
 import { getSignalingClient, initializeSignaling } from "@/lib/webrtcSignaling";
 import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/iceConnectionMonitor";
 import { forwardAudioToAttendees } from "@/lib/audioHandlerFix";
-import { getXirsysICEServers, createXirsysRTCConfiguration } from "@/lib/xirsysConfig";
-
-// Helper function to extract server instance from ICE servers
-function extractServerInstance(iceServers: any[]): string {
-  if (!iceServers || iceServers.length === 0) {
-    return 'unknown';
-  }
-
-  try {
-    for (const server of iceServers) {
-      if (server.urls) {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        
-        for (const url of urls) {
-          if (typeof url === 'string' && url.includes('turn:')) {
-            // Extract server instance from URL like "turn:fr-turn7.xirsys.com:80"
-            const match = url.match(/turn:.*?-turn(\d+)\.xirsys\.com/);
-            if (match && match[1]) {
-              return `turn${match[1]}`;
-            }
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.error('[GUIDE] Error extracting server instance:', error);
-  }
-
-  return 'unknown';
-}
+import { getStaticXirsysICEServers, createStaticXirsysRTCConfiguration } from "@/lib/xirsysConfig";
 
 // Audio monitoring and connection handling classes
 class AudioMonitor {
@@ -567,30 +538,13 @@ async function setupOpenAIConnection(
   let openaiPC: RTCPeerConnection;
 
   try {
-    console.log(`${langContext} [GUIDE-OPENAI-ICE] Fetching Xirsys ICE servers for OpenAI connection...`);
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] Using static Xirsys TURN configuration for OpenAI connection...`);
 
-    // EXPERT FIX: Fetch Xirsys servers with tour consistency
-    console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId}`);
-    const xirsysServers = await getXirsysICEServers(tourId);
-
-    if (xirsysServers && xirsysServers.length > 0) {
-      // CRITICAL FIX: Validate that we have TURN servers with credentials
-      const hasTurnServers = xirsysServers.some(server => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        const hasTurnUrl = urls.some(url => url.toLowerCase().startsWith('turn:'));
-        return hasTurnUrl && server.username && server.credential;
-      });
-      
-      console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for OpenAI connection (TURN: ${hasTurnServers ? 'present' : 'missing'})`);
-      
-      if (!hasTurnServers) {
-        console.warn(`${langContext} [GUIDE-OPENAI-ICE] ⚠️ No valid TURN servers in cached config - this may cause connectivity issues`);
-      }
-      
-      openaiPC = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers));
-    } else {
-      throw new Error('No Xirsys servers available');
-    }
+    // EXPERT FIX: Use static TURN configuration for guaranteed consistency
+    const xirsysServers = getStaticXirsysICEServers();
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using static jb-turn1.xirsys.com configuration (${xirsysServers.length} servers)`);
+    
+    openaiPC = new RTCPeerConnection(createStaticXirsysRTCConfiguration());
   } catch (error) {
     console.warn(`${langContext} [GUIDE-OPENAI-ICE] ⚠️ Xirsys unavailable, using fallback servers:`, error);
 
@@ -1762,64 +1716,14 @@ async function createAttendeeConnection(
   let attendeePC: RTCPeerConnection;
 
   try {
-    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Fetching Xirsys ICE servers for attendee ${attendeeId} connection...`);
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Using static Xirsys TURN configuration for attendee ${attendeeId} connection...`);
 
-    // EXPERT FIX: Fetch Xirsys servers with tour consistency
-    console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId}`);
-    const xirsysServers = await getXirsysICEServers(tourId);
-
-    if (xirsysServers && xirsysServers.length > 0) {
-      // CRITICAL FIX: Validate that we have TURN servers with credentials
-      const hasTurnServers = xirsysServers.some(server => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        const hasTurnUrl = urls.some(url => url.toLowerCase().startsWith('turn:'));
-        return hasTurnUrl && server.username && server.credential;
-      });
-      
-      console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using ${xirsysServers.length} Xirsys servers for attendee ${attendeeId} (TURN: ${hasTurnServers ? 'present' : 'missing'})`);
-      
-      // EXPERT FIX: Send ICE server config to attendee via signaling for consistency
-      const iceServerConfig = {
-        xirsysServers: xirsysServers,
-        timestamp: Date.now(),
-        serverInstance: extractServerInstance(xirsysServers)
-      };
-      
-      // Send ICE configuration to attendee through signaling
-      try {
-        const signalingClient = getSignalingClient();
-        if (signalingClient) {
-          await signalingClient.sendIceServerConfig(attendeeId, iceServerConfig);
-          console.log(`${langContext} [GUIDE-ICE-COORDINATION] Sent ICE server config to attendee ${attendeeId} (instance: ${iceServerConfig.serverInstance})`);
-        } else {
-          console.warn(`${langContext} [GUIDE-ICE-COORDINATION] No signaling client available for coordination`);
-        }
-      } catch (error) {
-        console.warn(`${langContext} [GUIDE-ICE-COORDINATION] Failed to send ICE server config:`, error);
-      }
-      
-      // DEBUGGING: Log server details to verify TURN servers are present
-      xirsysServers.forEach((server, index) => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        urls.forEach(url => {
-          const serverType = url.toLowerCase().startsWith('turn:') ? 'TURN' : 
-                           url.toLowerCase().startsWith('stun:') ? 'STUN' : 'UNKNOWN';
-          console.log(`${langContext} [GUIDE-SERVER-DEBUG] Server ${index + 1}: ${serverType} - ${url}`);
-          if (serverType === 'TURN') {
-            console.log(`${langContext} [GUIDE-SERVER-DEBUG] TURN credentials: username=${server.username ? 'present' : 'missing'}, credential=${server.credential ? 'present' : 'missing'}`);
-          }
-        });
-      });
-      
-      if (!hasTurnServers) {
-        console.warn(`${langContext} [GUIDE-ATTENDEE-ICE] ⚠️ No valid TURN servers in cached config - this may cause connectivity issues with attendee ${attendeeId}`);
-      }
-      
-      // Use enhanced candidate generation for better connectivity
-      attendeePC = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers, false));
-    } else {
-      throw new Error('No Xirsys servers available');
-    }
+    // EXPERT FIX: Use static TURN configuration - no coordination needed since both use same servers
+    const xirsysServers = getStaticXirsysICEServers();
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using static jb-turn1.xirsys.com configuration (${xirsysServers.length} servers) for attendee ${attendeeId}`);
+    
+    // Use enhanced candidate generation for better connectivity
+    attendeePC = new RTCPeerConnection(createStaticXirsysRTCConfiguration());
   } catch (error) {
     console.warn(`${langContext} [GUIDE-ATTENDEE-ICE] ⚠️ Xirsys unavailable for attendee ${attendeeId}, using fallback servers:`, error);
 

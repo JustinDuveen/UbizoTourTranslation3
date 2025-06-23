@@ -1,5 +1,5 @@
 // Simplified Attendee WebRTC - Aligned with Guide Implementation
-import { getXirsysICEServers, createXirsysRTCConfiguration } from './xirsysConfig';
+import { getStaticXirsysICEServers, createStaticXirsysRTCConfiguration } from './xirsysConfig';
 import { initializeSignaling, cleanupSignaling, getSignalingClient } from './webrtcSignaling';
 import { createICEMonitor, type ICETimeoutEvent } from './iceConnectionMonitor';
 import { normalizeLanguageForStorage } from './languageUtils';
@@ -397,41 +397,16 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
   const langContext = `[${language}]`;
   console.log(`${langContext} Creating peer connection...`);
 
-  // EXPERT FIX: Get tourId for consistent server assignment
-  const tourId = localStorage.getItem('currentTourId');
-  console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId || tourCode}`);
-
-  // EXPERT FIX: Create peer connection with coordinated ICE servers
+  // EXPERT FIX: Create peer connection with static jb-turn1.xirsys.com configuration
+  console.log(`${langContext} 🎯 Using static TURN configuration for guaranteed consistency`);
   let pc: RTCPeerConnection;
-  let iceServersFromGuide: any = null;
-  
-  // Listen for ICE server config from guide
-  const signalingClient = getSignalingClient();
-  if (signalingClient) {
-    signalingClient.onIceServerConfig((iceServerConfig: any) => {
-      console.log(`${langContext} 📡 Received ICE server config from guide (instance: ${iceServerConfig.serverInstance})`);
-      iceServersFromGuide = iceServerConfig.xirsysServers;
-      
-      // If we already have a peer connection, we'll need to restart ICE
-      if (pc && pc.connectionState !== 'closed') {
-        console.log(`${langContext} 🔄 Restarting ICE with guide's server configuration`);
-        pc.restartIce();
-      }
-    });
-  }
 
   try {
     let xirsysServers: any[];
     
-    // EXPERT FIX: Use guide's ICE servers if available, otherwise fetch independently
-    if (iceServersFromGuide) {
-      xirsysServers = iceServersFromGuide;
-      console.log(`${langContext} [ATTENDEE-ICE-COORDINATION] Using ICE servers from guide coordination`);
-    } else {
-      // Fallback: fetch independently (for backwards compatibility)
-      console.log(`${langContext} [ATTENDEE-ICE-COORDINATION] No guide coordination yet, fetching independently`);
-      xirsysServers = await getXirsysICEServers(tourId || tourCode);
-    }
+    // EXPERT FIX: Use static ICE servers for guaranteed consistency
+    console.log(`${langContext} [ATTENDEE-STATIC-ICE] Using static jb-turn1.xirsys.com configuration`);
+    xirsysServers = getStaticXirsysICEServers();
     
     if (xirsysServers && xirsysServers.length > 0) {
       // DEBUGGING: Log server details to verify TURN servers are present
@@ -476,8 +451,8 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
         );
       }
       
-      pc = new RTCPeerConnection(createXirsysRTCConfiguration(xirsysServers));
-      console.log(`${langContext} Using ${xirsysServers.length} ICE servers (${hasTurn ? 'with' : 'without'} TURN) - ${iceServersFromGuide ? 'coordinated' : 'independent'}`);
+      pc = new RTCPeerConnection(createStaticXirsysRTCConfiguration());
+      console.log(`${langContext} ✅ Using static jb-turn1.xirsys.com configuration (${xirsysServers.length} servers, TURN enabled)`);
     } else {
       throw new Error('No Xirsys servers available');
     }
