@@ -2,6 +2,7 @@ import { executeReplaceOfferTransaction, normalizeLanguageForStorage } from "@/l
 import { getSignalingClient, initializeSignaling } from "@/lib/webrtcSignaling";
 import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/iceConnectionMonitor";
 import { forwardAudioToAttendees } from "@/lib/audioHandlerFix";
+import { getXirsysICEServers, createXirsysRTCConfiguration } from "@/lib/xirsysConfig";
 
 // Audio monitoring and connection handling classes
 class AudioMonitor {
@@ -539,8 +540,7 @@ async function setupOpenAIConnection(
   try {
     console.log(`${langContext} [GUIDE-OPENAI-ICE] Fetching Xirsys ICE servers for OpenAI connection...`);
 
-    // EXPERT FIX: Import and fetch Xirsys servers with tour consistency
-    const { getXirsysICEServers, createXirsysRTCConfiguration } = await import('./xirsysConfig');
+    // EXPERT FIX: Fetch Xirsys servers with tour consistency
     console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId}`);
     const xirsysServers = await getXirsysICEServers(tourId);
 
@@ -1735,8 +1735,7 @@ async function createAttendeeConnection(
   try {
     console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Fetching Xirsys ICE servers for attendee ${attendeeId} connection...`);
 
-    // EXPERT FIX: Import and fetch Xirsys servers with tour consistency 
-    const { getXirsysICEServers, createXirsysRTCConfiguration } = await import('./xirsysConfig');
+    // EXPERT FIX: Fetch Xirsys servers with tour consistency
     console.log(`${langContext} 🎯 Using tourId for Xirsys consistency: ${tourId}`);
     const xirsysServers = await getXirsysICEServers(tourId);
 

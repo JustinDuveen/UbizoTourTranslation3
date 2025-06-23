@@ -259,21 +259,21 @@ export default function Auth() {
                         <SelectValue placeholder="Select your role" />
                       </SelectTrigger>
                       <SelectContent className="bg-slate-800 border-white/20">
-                        <SelectItem value="guide" className="text-white hover:bg-white/10 p-3">
+                        <SelectItem value="guide" className="text-black hover:bg-white/10 p-3">
                           <div className="flex items-center w-full">
                             <Radio className="h-4 w-4 mr-3 text-orange-400 flex-shrink-0" />
                             <div className="flex-1">
-                              <div className="font-medium">Tour Guide</div>
-                              <div className="text-xs text-white/60 mt-1">Create and broadcast multilingual tours</div>
+                              <div className="font-medium text-black">Tour Guide</div>
+                              <div className="text-xs text-black/60 mt-1">Create and broadcast multilingual tours</div>
                             </div>
                           </div>
                         </SelectItem>
-                        <SelectItem value="attendee" className="text-white hover:bg-white/10 p-3">
+                        <SelectItem value="attendee" className="text-black hover:bg-white/10 p-3">
                           <div className="flex items-center w-full">
                             <Headphones className="h-4 w-4 mr-3 text-cyan-400 flex-shrink-0" />
                             <div className="flex-1">
-                              <div className="font-medium">Attendee</div>
-                              <div className="text-xs text-white/60 mt-1">Join and listen to live tours</div>
+                              <div className="font-medium text-black">Attendee</div>
+                              <div className="text-xs text-black/60 mt-1">Join and listen to live tours</div>
                             </div>
                           </div>
                         </SelectItem>
