@@ -252,7 +252,7 @@ export default function Home() {
                     { icon: Shield, text: "Advanced attendee management & analytics" },
                     { icon: Clock, text: "Real-time translation monitoring" }
                   ].map((item, index) => (
-                    <div key={index} className="flex items-center text-white/90">
+                    <div key={index} className="flex items-center text-black/90">
                       <div className="bg-green-500/20 rounded-lg p-2 mr-4">
                         <item.icon className="h-4 w-4 text-green-400" />
                       </div>
@@ -301,7 +301,7 @@ export default function Home() {
                     { icon: Headphones, text: "High-fidelity audio streaming" },
                     { icon: Shield, text: "Secure & private connection" }
                   ].map((item, index) => (
-                    <div key={index} className="flex items-center text-white/90">
+                    <div key={index} className="flex items-center text-black/90">
                       <div className="bg-blue-500/20 rounded-lg p-2 mr-4">
                         <item.icon className="h-4 w-4 text-blue-400" />
                       </div>

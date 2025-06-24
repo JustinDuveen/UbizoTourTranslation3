@@ -379,8 +379,9 @@ export class ProductionWebRTCManager {
 
   private handleMonitoringAlert(alert: any): void {
     const context = `[ProductionWebRTC:${this.connectionId}]`;
-    console.warn(`${context} ⚠️ Monitoring alert: ${alert.message}`);
-    
+    const alertMessage = alert && typeof alert === 'object' && alert.message ? alert.message : String(alert);
+    console.warn(`${context} ⚠️ Monitoring alert: ${alertMessage}`);
+
     // Trigger quality degradation for critical alerts
     if (alert.level === 'critical' && this.degradationManager) {
       this.degradationManager.executeEmergencyFallback();
@@ -390,8 +391,9 @@ export class ProductionWebRTCManager {
   private handleMonitoringError(error: any): void {
     const context = `[ProductionWebRTC:${this.connectionId}]`;
     console.error(`${context} 📊 Monitoring error:`, error);
-    
-    this.config.onError?.(new Error(`Monitoring error: ${error.message}`));
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.config.onError?.(new Error(`Monitoring error: ${errorMessage}`));
   }
 
   private handleQualityChange(level: QualityLevel, settings: any): void {

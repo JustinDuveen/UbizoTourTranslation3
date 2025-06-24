@@ -1,10 +1,16 @@
-// Simplified Attendee WebRTC - Aligned with Guide Implementation
+// Enterprise Attendee WebRTC - Using Enterprise Components
 import { getStaticXirsysICEServers, createStaticXirsysRTCConfiguration } from './xirsysConfig';
 import { initializeSignaling, cleanupSignaling, getSignalingClient } from './webrtcSignaling';
 import { createICEMonitor, type ICETimeoutEvent } from './iceConnectionMonitor';
 import { normalizeLanguageForStorage } from './languageUtils';
 import { validateAttendeeId, validateTourConnectionParams } from './parameterValidation';
 import type { TourConnectionParams } from './types/audio';
+
+// Enterprise imports
+import { enterpriseConnectionManager, EnterpriseConnection, ConnectionState } from './enterpriseConnectionManager';
+import { EnterpriseICEManager } from './enterpriseICEManager';
+import { EnterpriseSDPManager } from './enterpriseSDPManager';
+import { enterpriseAudio } from './enterpriseAudioPipeline';
 
 // EXPERT FIX: Enhanced attendeeId management with validation
 function getOrCreateAttendeeId(
@@ -195,17 +201,15 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
     // Create peer connection with immediate ICE handling (aligned with guide behavior)
     const { pc, audioEl } = await createPeerConnection(normalizedLanguage, tourCode, true); // Pass true to enable immediate ICE handling
 
-    // CRITICAL FIX: Set remote description FIRST (this triggers ICE candidate generation)
-    console.log(`${langContext} Setting remote description from guide offer...`);
-    const validatedOffer = validateAndFormatSDP(offer);
+    // ENTERPRISE: Set remote description using Enterprise SDP Manager
+    console.log(`${langContext} Setting remote description from guide offer using Enterprise SDP Manager...`);
+    const validatedOffer = EnterpriseSDPManager.validateAndFormatSDP(offer);
     await pc.setRemoteDescription(validatedOffer);
     console.log(`${langContext} Remote description set successfully - ICE gathering should start immediately`);
 
-    // Create and set local answer (attendee is ICE controlled)
-    const answer = await pc.createAnswer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: false
-    });
+    // ENTERPRISE: Create optimized answer using Enterprise SDP Manager
+    const answer = await EnterpriseSDPManager.createOptimizedAnswer(pc);
+    console.log(`${langContext} Enterprise-optimized answer created`);
 
     // Fix SDP directionality - attendee receives audio only (recvonly)
     let modifiedSdp = answer.sdp;
@@ -435,83 +439,33 @@ async function fetchTourOffer(tourCode: string, language: string, attendeeName: 
 
 async function createPeerConnection(language: string, tourCode: string, enableIceHandlingImmediately = true) {
   const langContext = `[${language}]`;
-  console.log(`${langContext} Creating peer connection...`);
+  console.log(`${langContext} Creating peer connection with Enterprise ICE Manager...`);
 
-  // EXPERT FIX: Create peer connection with static jb-turn1.xirsys.com configuration
-  console.log(`${langContext} 🎯 Using static TURN configuration for guaranteed consistency`);
+  // ENTERPRISE: Use Enterprise ICE Manager for consistent configuration
+  const iceManager = EnterpriseICEManager.getInstance();
+  const rtcConfig = iceManager.getRTCConfiguration('attendee');
+
+  console.log(`${langContext} 🎯 Using Enterprise ICE configuration`);
+  console.log(`${langContext} ICE servers: ${rtcConfig.iceServers?.length || 0}, Pool size: ${rtcConfig.iceCandidatePoolSize}`);
+
   let pc: RTCPeerConnection;
 
   try {
-    let xirsysServers: any[];
-    
-    // EXPERT FIX: Use static ICE servers for guaranteed consistency
-    console.log(`${langContext} [ATTENDEE-STATIC-ICE] Using static jb-turn1.xirsys.com configuration`);
-    xirsysServers = getStaticXirsysICEServers();
-    
-    if (xirsysServers && xirsysServers.length > 0) {
-      // DEBUGGING: Log server details to verify TURN servers are present
-      console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Using ${xirsysServers.length} Xirsys servers:`);
-      xirsysServers.forEach((server, index) => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        urls.forEach((url: string) => {
-          const serverType = url.toLowerCase().startsWith('turn:') ? 'TURN' : 
-                           url.toLowerCase().startsWith('stun:') ? 'STUN' : 'UNKNOWN';
-          console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] Server ${index + 1}: ${serverType} - ${url}`);
-          if (serverType === 'TURN') {
-            console.log(`${langContext} [ATTENDEE-SERVER-DEBUG] TURN credentials: username=${server.username ? 'present' : 'missing'}, credential=${server.credential ? 'present' : 'missing'}`);
-          }
-        });
-      });
-      
-      // Check if we have TURN servers
-      const hasTurn = xirsysServers.some(server => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        return urls.some((url: string) => url.toLowerCase().startsWith('turn:'));
-      });
-      
-      if (!hasTurn) {
-        console.warn(`${langContext} No TURN servers in Xirsys config, adding fallback TURN servers`);
-        // Add fallback TURN servers to the Xirsys configuration
-        xirsysServers.push(
-          {
-            urls: "turn:openrelay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-          },
-          {
-            urls: "turn:openrelay.metered.ca:443",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-          },
-          {
-            urls: "turn:openrelay.metered.ca:443?transport=tcp",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-          }
-        );
-      }
-      
-      pc = new RTCPeerConnection(createStaticXirsysRTCConfiguration());
-      console.log(`${langContext} ✅ Using static jb-turn1.xirsys.com configuration (${xirsysServers.length} servers, TURN enabled)`);
-    } else {
-      throw new Error('No Xirsys servers available');
-    }
+    // Create peer connection with enterprise configuration
+    pc = new RTCPeerConnection(rtcConfig);
+    console.log(`${langContext} ✅ Enterprise peer connection created successfully`);
+
+    // Log ICE server health status
+    const healthStatus = iceManager.getHealthStatus();
+    console.log(`${langContext} ICE server health status:`, Array.from(healthStatus.entries()).map(([url, status]) => ({
+      url,
+      healthy: status.isHealthy,
+      responseTime: status.responseTime
+    })));
   } catch (error) {
-    console.warn(`${langContext} Xirsys unavailable, using fallback servers:`, error);
-    pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        }
-      ],
-      iceCandidatePoolSize: 15,  // Match guide's candidate pool size for symmetrical ICE negotiation
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require',
-      iceTransportPolicy: 'all'
-    });
+    console.error(`${langContext} Enterprise ICE configuration failed:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to create peer connection: ${errorMessage}`);
   }
 
   // Create audio element and add to DOM (critical for proper playback)
@@ -1339,15 +1293,12 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
   // EXPERT FIX: Enhanced attendeeId persistence with validation and cleanup
   const attendeeId = getOrCreateAttendeeId(tourId, language, existingAttendeeId, langContext);
 
-  // Validate and set remote description
-  const offer = validateAndFormatSDP(offerData);
+  // ENTERPRISE: Validate and set remote description using Enterprise SDP Manager
+  const offer = EnterpriseSDPManager.validateAndFormatSDP(offerData);
   await pc.setRemoteDescription(offer);
 
-  // Create and set local answer
-  const answer = await pc.createAnswer({
-    offerToReceiveAudio: true,
-    offerToReceiveVideo: false
-  });
+  // ENTERPRISE: Create optimized answer using Enterprise SDP Manager
+  const answer = await EnterpriseSDPManager.createOptimizedAnswer(pc);
 
   // Fix SDP directionality - attendee receives audio only (recvonly)
   let modifiedSdp = answer.sdp;
@@ -1427,6 +1378,12 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
 }
 
 function validateAndFormatSDP(offerData: any): RTCSessionDescriptionInit {
+  // ENTERPRISE: Delegate to Enterprise SDP Manager for consistency
+  return EnterpriseSDPManager.validateAndFormatSDP(offerData);
+}
+
+// Legacy function for backward compatibility
+function validateAndFormatSDPLegacy(offerData: any): RTCSessionDescriptionInit {
   // Check for placeholder offers
   if (offerData && typeof offerData === 'object') {
     const isPlaceholder = 

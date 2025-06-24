@@ -168,35 +168,33 @@ export default function Auth() {
         <div className="w-full max-w-md">
           {/* Header */}
           <div className="text-center mb-8">
-            <div className={`${isRegisterMode ? 'bg-gradient-to-r from-green-500 to-cyan-500' : 'bg-gradient-to-r from-blue-500 to-cyan-500'} rounded-xl p-4 w-16 h-16 mx-auto mb-6 shadow-lg transition-all duration-300`}>
-              {isRegisterMode ? <UserPlus className="h-8 w-8 text-white" /> : <LogIn className="h-8 w-8 text-white" />}
+            <div className="bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500 rounded-xl p-4 w-16 h-16 mx-auto mb-6 shadow-lg">
+              <UserCheck className="h-8 w-8 text-white" />
             </div>
             <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">
-              {isRegisterMode ? "Create Account" : "Welcome Back"}
+              Sign In or Create Account
             </h1>
-            <p className="text-white/70">
-              {isRegisterMode ? "Join our multilingual tour platform" : "Sign in to your account to continue"}
+            <p className="text-white/70 text-base sm:text-lg leading-relaxed">
+              Enter your email and password - we'll sign you in or create your account automatically
             </p>
+            <div className="mt-4 inline-flex items-center px-3 py-1 bg-blue-500/20 backdrop-blur-sm rounded-full border border-blue-400/30">
+              <Shield className="h-3 w-3 text-blue-400 mr-2" />
+              <span className="text-blue-300 text-xs font-medium">Smart Authentication</span>
+            </div>
           </div>
 
           {/* Auth Form */}
           <Card className="bg-white/5 backdrop-blur-sm border-white/10 hover:border-white/20 transition-all duration-300 shadow-2xl">
             <CardHeader className="text-center">
               <CardTitle className="text-white flex items-center justify-center">
-                {isRegisterMode ? (
-                  <>
-                    <Users className="h-5 w-5 mr-2 text-cyan-400" />
-                    Sign Up
-                  </>
-                ) : (
-                  <>
-                    <UserCheck className="h-5 w-5 mr-2 text-cyan-400" />
-                    Sign In
-                  </>
-                )}
+                <UserCheck className="h-5 w-5 mr-2 text-cyan-400" />
+                {isRegisterMode ? "Complete Your Registration" : "Enter Your Details"}
               </CardTitle>
               <CardDescription className="text-white/70">
-                {isRegisterMode ? "Create your account to get started" : "Enter your credentials to access your dashboard"}
+                {isRegisterMode
+                  ? "Just select your role to complete account creation"
+                  : "We'll automatically sign you in or create your account"
+                }
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -247,69 +245,87 @@ export default function Auth() {
                   </div>
                 </div>
 
-                {/* Role Selection - only show in register mode */}
-                {isRegisterMode && (
-                  <div className="space-y-2">
-                    <label className="text-white/80 text-sm font-medium flex items-center">
-                      <Users className="h-4 w-4 mr-2 text-amber-400" />
-                      Account Type
-                    </label>
-                    <Select onValueChange={(value) => setRole(value as "guide" | "attendee")} defaultValue={role} disabled={isLoading}>
-                      <SelectTrigger className="w-full p-4 bg-white/10 border border-white/20 rounded-xl text-white focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
-                        <SelectValue placeholder="Select your role" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-800 border-white/20">
-                        <SelectItem value="guide" className="text-black hover:bg-white/10 p-3">
-                          <div className="flex items-center w-full">
-                            <Radio className="h-4 w-4 mr-3 text-orange-400 flex-shrink-0" />
-                            <div className="flex-1">
-                              <div className="font-medium text-black">Tour Guide</div>
-                              <div className="text-xs text-black/60 mt-1">Create and broadcast multilingual tours</div>
-                            </div>
+                {/* Role Selection - always visible with smart messaging */}
+                <div className="space-y-2">
+                  <label className="text-white/80 text-sm font-medium flex items-center">
+                    <Users className="h-4 w-4 mr-2 text-amber-400" />
+                    Account Type
+                    <span className="ml-2 text-xs text-white/50">
+                      ({isRegisterMode ? "Required for new accounts" : "Used for new accounts only"})
+                    </span>
+                  </label>
+                  <Select onValueChange={(value) => setRole(value as "guide" | "attendee")} defaultValue={role} disabled={isLoading}>
+                    <SelectTrigger className="w-full p-4 bg-white/10 border border-white/20 rounded-xl text-white focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                      <SelectValue placeholder="Select your role" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-white/20">
+                      <SelectItem value="guide" className="text-black hover:bg-white/10 p-3">
+                        <div className="flex items-center w-full">
+                          <Radio className="h-4 w-4 mr-3 text-orange-400 flex-shrink-0" />
+                          <div className="flex-1">
+                            <div className="font-medium text-black">Tour Guide</div>
+                            <div className="text-xs text-black/60 mt-1">Create and broadcast multilingual tours</div>
                           </div>
-                        </SelectItem>
-                        <SelectItem value="attendee" className="text-black hover:bg-white/10 p-3">
-                          <div className="flex items-center w-full">
-                            <Headphones className="h-4 w-4 mr-3 text-cyan-400 flex-shrink-0" />
-                            <div className="flex-1">
-                              <div className="font-medium text-black">Attendee</div>
-                              <div className="text-xs text-black/60 mt-1">Join and listen to live tours</div>
-                            </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="attendee" className="text-black hover:bg-white/10 p-3">
+                        <div className="flex items-center w-full">
+                          <Headphones className="h-4 w-4 mr-3 text-cyan-400 flex-shrink-0" />
+                          <div className="flex-1">
+                            <div className="font-medium text-black">Attendee</div>
+                            <div className="text-xs text-black/60 mt-1">Join and listen to live tours</div>
                           </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 {/* Auth Button */}
                 <Button
                   type="submit"
                   disabled={isLoading || !email.trim() || !password.trim()}
-                  className={`w-full ${isRegisterMode ? 'bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600' : 'bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600'} text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 min-h-[48px]`}
+                  className="w-full bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-500 hover:from-blue-600 hover:via-purple-600 hover:to-cyan-600 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 min-h-[48px]"
                   size="lg"
                 >
                   {isLoading ? (
                     <>
                       <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                      {isRegisterMode ? "Creating Account..." : "Signing In..."}
+                      {isRegisterMode ? "Creating Account..." : "Processing..."}
                     </>
                   ) : (
                     <>
                       {isRegisterMode ? (
                         <>
                           <UserPlus className="h-5 w-5 mr-2" />
-                          Create Account
+                          Complete Registration
                         </>
                       ) : (
                         <>
-                          <LogIn className="h-5 w-5 mr-2" />
-                          Sign In
+                          <UserCheck className="h-5 w-5 mr-2" />
+                          Continue
                         </>
                       )}
                     </>
                   )}
                 </Button>
+
+                {/* Smart Flow Explanation */}
+                {!isRegisterMode && (
+                  <div className="mt-4 p-3 bg-blue-500/10 border border-blue-400/20 rounded-lg">
+                    <div className="flex items-start">
+                      <Shield className="h-4 w-4 text-blue-400 mr-2 mt-0.5 flex-shrink-0" />
+                      <div className="text-xs text-blue-200">
+                        <div className="font-medium mb-1">How it works:</div>
+                        <div className="text-blue-200/80">
+                          • Existing user? We'll sign you in instantly<br/>
+                          • New user? We'll create your account with the selected role<br/>
+                          • Secure and seamless either way
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </form>
 
               {/* Mode Toggle */}

@@ -4,6 +4,12 @@ import { createICEMonitor, handleICETimeout, type ICETimeoutEvent } from "@/lib/
 import { forwardAudioToAttendees } from "@/lib/audioHandlerFix";
 import { getStaticXirsysICEServers, createStaticXirsysRTCConfiguration } from "@/lib/xirsysConfig";
 
+// Enterprise imports
+import { enterpriseConnectionManager, EnterpriseConnection, ConnectionState } from './enterpriseConnectionManager';
+import { EnterpriseICEManager } from './enterpriseICEManager';
+import { EnterpriseSDPManager } from './enterpriseSDPManager';
+import { enterpriseAudio } from './enterpriseAudioPipeline';
+
 // Audio monitoring and connection handling classes
 class AudioMonitor {
   private audioContext: AudioContext;
@@ -538,34 +544,19 @@ async function setupOpenAIConnection(
   let openaiPC: RTCPeerConnection;
 
   try {
-    console.log(`${langContext} [GUIDE-OPENAI-ICE] Using static Xirsys TURN configuration for OpenAI connection...`);
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] Using Enterprise ICE configuration for OpenAI connection...`);
 
-    // EXPERT FIX: Use static TURN configuration for guaranteed consistency
-    const xirsysServers = getStaticXirsysICEServers();
-    console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Using static jb-turn1.xirsys.com configuration (${xirsysServers.length} servers)`);
-    
-    openaiPC = new RTCPeerConnection(createStaticXirsysRTCConfiguration());
+    // ENTERPRISE: Use Enterprise ICE Manager for OpenAI connection
+    const iceManager = EnterpriseICEManager.getInstance();
+    const rtcConfig = iceManager.getRTCConfiguration('guide');
+
+    console.log(`${langContext} [GUIDE-OPENAI-ICE] ✅ Enterprise ICE config: ${rtcConfig.iceServers?.length || 0} servers, pool: ${rtcConfig.iceCandidatePoolSize}`);
+
+    openaiPC = new RTCPeerConnection(rtcConfig);
   } catch (error) {
-    console.warn(`${langContext} [GUIDE-OPENAI-ICE] ⚠️ Xirsys unavailable, using fallback servers:`, error);
-
-    // Fallback to public servers
-    openaiPC = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:global.stun.twilio.com:3478" },
-        { urls: "stun:stun.cloudflare.com:3478" },
-        {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        }
-      ],
-      // Expert WebRTC configuration optimized for production
-      iceCandidatePoolSize: 6,   // Increased for global infrastructure
-      bundlePolicy: 'max-bundle', // Bundle all media on single transport
-      rtcpMuxPolicy: 'require',   // Multiplex RTP and RTCP for efficiency
-      iceTransportPolicy: 'all'   // Use all transport types
-    });
+    console.error(`${langContext} [GUIDE-OPENAI-ICE] ❌ Enterprise ICE configuration failed:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to create OpenAI peer connection: ${errorMessage}`);
   }
 
   console.log(`${langContext} [GUIDE-OPENAI-ICE] Created OpenAI peer connection with ${openaiPC.getConfiguration().iceServers?.length} ICE servers (Xirsys TURN/STUN)`);
@@ -901,13 +892,10 @@ async function setupOpenAIConnection(
     }
   };
 
-  // Create and set local description (Guide is ICE controlling for OpenAI)
+  // ENTERPRISE: Create and set local description using Enterprise SDP Manager
   try {
-    const offer = await openaiPC.createOffer({
-      iceRestart: false,
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: false
-    });
+    const offer = await EnterpriseSDPManager.createOptimizedOffer(openaiPC);
+    console.log(`${langContext} Enterprise-optimized offer created for OpenAI`);
 
     // Enhance the SDP for better audio compatibility
     let modifiedSdp = offer.sdp;
@@ -1448,12 +1436,9 @@ async function processAttendeeAnswer(
 
       console.log(`${langContext} Processed ${audioTracks.length} OpenAI audio track(s) for attendee ${attendeeId} connection`);
 
-      // Create offer for this attendee connection (Guide is ICE controlling)
-      const offer = await attendeePC.createOffer({
-        iceRestart: false,
-        offerToReceiveAudio: false, // Guide sends audio, doesn't receive
-        offerToReceiveVideo: false
-      });
+      // ENTERPRISE: Create optimized offer for this attendee connection
+      const offer = await EnterpriseSDPManager.createOptimizedOffer(attendeePC);
+      console.log(`${langContext} Enterprise-optimized offer created for attendee ${attendeeId}`);
 
       await attendeePC.setLocalDescription(offer);
       console.log(`${langContext} Created and set local offer for attendee ${attendeeId}`);
@@ -1659,13 +1644,9 @@ async function processAttendeeAnswer(
               }
             });
             
-            // CRITICAL: Create new offer with audio tracks for renegotiation
-            console.log(`${langContext} 🔄 Creating new offer with audio tracks for attendee ${attendeeId}`);
-            attendeePC.createOffer({
-              iceRestart: false,
-              offerToReceiveAudio: false,
-              offerToReceiveVideo: false
-            }).then(newOffer => {
+            // ENTERPRISE: Create new optimized offer with audio tracks for renegotiation
+            console.log(`${langContext} 🔄 Creating new Enterprise-optimized offer with audio tracks for attendee ${attendeeId}`);
+            EnterpriseSDPManager.createOptimizedOffer(attendeePC).then(newOffer => {
               return attendeePC.setLocalDescription(newOffer).then(() => {
                 // Store the new offer so attendee can get it
                 return fetch('/api/tour/offer', {
@@ -1725,35 +1706,19 @@ async function createAttendeeConnection(
   let attendeePC: RTCPeerConnection;
 
   try {
-    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Using static Xirsys TURN configuration for attendee ${attendeeId} connection...`);
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Using Enterprise ICE configuration for attendee ${attendeeId} connection...`);
 
-    // EXPERT FIX: Use static TURN configuration - no coordination needed since both use same servers
-    const xirsysServers = getStaticXirsysICEServers();
-    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Using static jb-turn1.xirsys.com configuration (${xirsysServers.length} servers) for attendee ${attendeeId}`);
-    
-    // Use enhanced candidate generation for better connectivity
-    attendeePC = new RTCPeerConnection(createStaticXirsysRTCConfiguration());
+    // ENTERPRISE: Use Enterprise ICE Manager for attendee connections
+    const iceManager = EnterpriseICEManager.getInstance();
+    const rtcConfig = iceManager.getRTCConfiguration('guide'); // Guide role for consistency
+
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Enterprise ICE config for attendee ${attendeeId}: ${rtcConfig.iceServers?.length || 0} servers, pool: ${rtcConfig.iceCandidatePoolSize}`);
+
+    attendeePC = new RTCPeerConnection(rtcConfig);
   } catch (error) {
-    console.warn(`${langContext} [GUIDE-ATTENDEE-ICE] ⚠️ Xirsys unavailable for attendee ${attendeeId}, using fallback servers:`, error);
-
-    // Fallback to public servers with enhanced configuration
-    attendeePC = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:global.stun.twilio.com:3478" },
-        { urls: "stun:stun.cloudflare.com:3478" },
-        {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        }
-      ],
-      // Expert WebRTC configuration optimized for production
-      iceCandidatePoolSize: 15,   // Enhanced candidate generation
-      bundlePolicy: 'max-bundle', // Bundle all media on single transport
-      rtcpMuxPolicy: 'require',   // Multiplex RTP and RTCP for efficiency
-      iceTransportPolicy: 'all'   // Allow all candidate types
-    });
+    console.error(`${langContext} [GUIDE-ATTENDEE-ICE] ❌ Enterprise ICE configuration failed for attendee ${attendeeId}:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to create attendee peer connection: ${errorMessage}`);
   }
 
   console.log(`${langContext} [GUIDE-ATTENDEE-ICE] Created attendee peer connection with ${attendeePC.getConfiguration().iceServers?.length} ICE servers (Xirsys TURN/STUN)`);
@@ -1976,14 +1941,17 @@ async function createAttendeeConnection(
               }
               throw new Error(`Backup API failed: ${response.status}`);
             }).then(result => {
-              console.log(`${langContext} [GUIDE-ICE] 💾 ${result.message}`);
+              const resultMessage = result && typeof result === 'object' && result.message ? result.message : String(result);
+              console.log(`${langContext} [GUIDE-ICE] 💾 ${resultMessage}`);
             }).catch(e => {
               console.warn(`${langContext} [GUIDE-ICE] Failed to backup candidates via API:`, e);
               // Continue without clearing - safer than losing candidates
             });
 
-            // Force ICE restart to generate more candidates
-            attendeePC.createOffer({ iceRestart: true }).then(offer => {
+            // ENTERPRISE: Force ICE restart with optimized offer
+            EnterpriseSDPManager.createOptimizedOffer(attendeePC).then(offer => {
+              // Manually restart ICE
+              attendeePC.restartIce();
               console.log(`${langContext} [GUIDE-ICE] 🔄 ICE restart offer created for attendee ${attendeeId} (attempt ${restartInfo.attempts})`);
               return attendeePC.setLocalDescription(offer);
             }).then(() => {
