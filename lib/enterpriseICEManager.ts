@@ -38,8 +38,8 @@ export interface ICEServerHealth {
 class ICEServerHealthMonitor {
   private healthStatus: Map<string, ICEServerHealth> = new Map();
   private checkInterval: NodeJS.Timeout | null = null;
-  private readonly CHECK_INTERVAL_MS = 30000; // 30 seconds
-  private readonly MAX_ERROR_COUNT = 3;
+  private readonly CHECK_INTERVAL_MS = 60000; // 60 seconds (less aggressive)
+  private readonly MAX_ERROR_COUNT = 5; // More lenient threshold
 
   constructor() {
     this.startHealthChecking();
@@ -66,70 +66,97 @@ class ICEServerHealthMonitor {
 
   private async checkSTUNServer(url: string): Promise<void> {
     const startTime = Date.now();
-    
+
     try {
       // Create a temporary peer connection to test STUN server
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: url }]
+        iceServers: [{ urls: url }],
+        iceCandidatePoolSize: 1 // Minimal pool for health check
       });
 
       // Set up a promise that resolves when we get ICE candidates
-      const icePromise = new Promise<boolean>((resolve) => {
+      const icePromise = new Promise<boolean>((resolve, reject) => {
         let candidateReceived = false;
-        
+        let timeoutId: NodeJS.Timeout;
+
         pc.onicecandidate = (event) => {
           if (event.candidate && !candidateReceived) {
             candidateReceived = true;
+            clearTimeout(timeoutId);
             resolve(true);
           }
         };
 
-        // Timeout after 5 seconds
-        setTimeout(() => {
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete' && !candidateReceived) {
+            clearTimeout(timeoutId);
+            resolve(false);
+          }
+        };
+
+        // More lenient timeout for health checks (10 seconds)
+        timeoutId = setTimeout(() => {
           if (!candidateReceived) {
             resolve(false);
           }
-        }, 5000);
+        }, 10000);
       });
 
       // Create a dummy offer to trigger ICE gathering
-      await pc.createOffer();
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
       const success = await icePromise;
-      
+
       pc.close();
 
       const responseTime = Date.now() - startTime;
-      
+      const currentStatus = this.healthStatus.get(url);
+
+      // More lenient error counting - only increment on consecutive failures
+      let newErrorCount = 0;
+      if (!success) {
+        newErrorCount = (currentStatus?.errorCount || 0) + 1;
+      } else {
+        // Reset error count on success
+        newErrorCount = 0;
+      }
+
       this.updateHealthStatus(url, {
         url,
-        isHealthy: success,
+        isHealthy: success || newErrorCount < this.MAX_ERROR_COUNT, // Keep healthy if under threshold
         lastChecked: Date.now(),
         responseTime,
-        errorCount: success ? 0 : (this.healthStatus.get(url)?.errorCount || 0) + 1
+        errorCount: newErrorCount
       });
 
     } catch (error) {
       console.error(`Health check failed for STUN server ${url}:`, error);
-      
+
       const currentStatus = this.healthStatus.get(url);
+      const newErrorCount = (currentStatus?.errorCount || 0) + 1;
+
       this.updateHealthStatus(url, {
         url,
-        isHealthy: false,
+        isHealthy: newErrorCount < this.MAX_ERROR_COUNT, // Keep healthy if under threshold
         lastChecked: Date.now(),
         responseTime: Date.now() - startTime,
-        errorCount: (currentStatus?.errorCount || 0) + 1
+        errorCount: newErrorCount
       });
     }
   }
 
   private updateHealthStatus(url: string, status: ICEServerHealth): void {
+    const previousStatus = this.healthStatus.get(url);
     this.healthStatus.set(url, status);
-    
-    // Log health status changes
+
+    // Log health status changes only when status actually changes
     if (!status.isHealthy && status.errorCount >= this.MAX_ERROR_COUNT) {
-      console.warn(`ICE server ${url} marked as unhealthy after ${status.errorCount} failures`);
-    } else if (status.isHealthy && (this.healthStatus.get(url)?.errorCount || 0) > 0) {
-      console.info(`ICE server ${url} recovered and marked as healthy`);
+      if (!previousStatus || previousStatus.isHealthy) {
+        console.warn(`ICE server ${url} marked as unhealthy after ${status.errorCount} consecutive failures`);
+      }
+    } else if (status.isHealthy && previousStatus && !previousStatus.isHealthy) {
+      console.info(`ICE server ${url} recovered and marked as healthy (response time: ${status.responseTime}ms)`);
     }
   }
 

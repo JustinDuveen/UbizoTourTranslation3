@@ -145,6 +145,10 @@ const openAIConnectionsByLanguage = new Map<string, OpenAIConnection>();
 const attendeeConnectionsByLanguage = new Map<string, Map<string, AttendeeConnection>>();
 const sentInstructions = new Set<string>();
 
+// Track last instruction send time to prevent excessive updates
+const lastInstructionTime = new Map<string, number>();
+const INSTRUCTION_COOLDOWN_MS = 10000; // 10 seconds minimum between instruction updates
+
 // Lazy initialization of AudioContext to avoid SSR issues
 let sharedAudioContext: AudioContext | null = null;
 
@@ -221,8 +225,18 @@ function sendTranslationInstructions(
       return;
     }
 
-    // Skip if instructions already sent and not forcing resend
-    if (sentInstructions.has(language) && !forceResend) {
+    // Check cooldown period to prevent excessive updates
+    const now = Date.now();
+    const lastSent = lastInstructionTime.get(language) || 0;
+    const timeSinceLastSent = now - lastSent;
+
+    if (timeSinceLastSent < INSTRUCTION_COOLDOWN_MS && !forceResend) {
+      console.log(`${langContext} Instructions sent recently (${Math.round(timeSinceLastSent/1000)}s ago), skipping to prevent spam`);
+      return;
+    }
+
+    // Skip if instructions already sent and not forcing resend (but respect cooldown)
+    if (sentInstructions.has(language) && !forceResend && timeSinceLastSent < INSTRUCTION_COOLDOWN_MS) {
       console.log(`${langContext} Instructions already sent for ${language}, skipping`);
       return;
     }
@@ -251,8 +265,9 @@ function sendTranslationInstructions(
     dataChannel.send(JSON.stringify(sessionUpdateEvent));
     console.log(`${langContext} System translation instructions sent successfully`);
 
-    // Mark instructions as sent
+    // Mark instructions as sent and update timestamp
     sentInstructions.add(language);
+    lastInstructionTime.set(language, now);
   } catch (error) {
     console.error(`${langContext} Error sending translation instructions:`, error);
   }
@@ -396,6 +411,14 @@ export function cleanupGuideWebRTC(specificLanguage?: string): void {
   const normalizedSpecificLanguage = specificLanguage ? normalizeLanguageForStorage(specificLanguage) : undefined;
   console.log(`Cleaning up Guide WebRTC connection${normalizedSpecificLanguage ? ` for ${normalizedSpecificLanguage}` : 's'}...`);
 
+  // Clean up instruction tracking for specific language or all languages
+  if (normalizedSpecificLanguage) {
+    sentInstructions.delete(normalizedSpecificLanguage);
+    lastInstructionTime.delete(normalizedSpecificLanguage);
+  } else {
+    sentInstructions.clear();
+    lastInstructionTime.clear();
+  }
 
   const cleanupConnection = (language: string, connection: OpenAIConnection) => {
     const langContext = `[${language}]`;
@@ -651,8 +674,12 @@ async function setupOpenAIConnection(
           break;
         case 'input_audio_buffer.speech_stopped':
           console.log(`${langContext} Speech stopped, OpenAI may generate a response`);
-          // Resend instructions after speech stops to maintain context
-          sendTranslationInstructions(openaiDC, language, langContext, true);
+          // Only resend instructions if it's been a while since last send
+          const timeSinceLastInstruction = Date.now() - (lastInstructionTime.get(language) || 0);
+          if (timeSinceLastInstruction > 30000) { // Only if 30+ seconds since last instruction
+            console.log(`${langContext} Resending instructions after speech stop (${Math.round(timeSinceLastInstruction/1000)}s since last)`);
+            sendTranslationInstructions(openaiDC, language, langContext, true);
+          }
           break;
         case 'error':
           console.error(`${langContext} Error from OpenAI:`, data.error || data);
@@ -766,15 +793,18 @@ async function setupOpenAIConnection(
       () => {/* Silence detected - log removed */},
       () => {/* Audio activity detected - log removed */},
       () => {
-        // Speech resumed after silence - resend instructions
+        // Speech resumed after silence - only resend if it's been a while
         if (openaiDC.readyState === 'open') {
-          console.log(`${langContext} Speech resumed after silence, resending translation instructions`);
-          sendTranslationInstructions(openaiDC, language, langContext, true);
+          const timeSinceLastInstruction = Date.now() - (lastInstructionTime.get(language) || 0);
+          if (timeSinceLastInstruction > 60000) { // Only if 60+ seconds since last instruction
+            console.log(`${langContext} Speech resumed after silence, resending translation instructions (${Math.round(timeSinceLastInstruction/1000)}s since last)`);
+            sendTranslationInstructions(openaiDC, language, langContext, true);
+          }
         }
       }
     );
 
-    // Set up periodic instruction refresh (every 2 minutes)
+    // Set up periodic instruction refresh (every 5 minutes, less aggressive)
     audioMonitor.startInstructionRefresh(() => {
       if (openaiDC.readyState === 'open') {
         console.log(`${langContext} Periodic instruction refresh, resending translation instructions`);
@@ -783,7 +813,7 @@ async function setupOpenAIConnection(
         // Also refresh VAD settings periodically to ensure they're maintained
         updateSessionVADSettings(openaiDC, langContext);
       }
-    }, 120000);
+    }, 300000); // 5 minutes instead of 2
 
     // Add audio track to peer connection
     microphoneTracks.forEach(track => {
