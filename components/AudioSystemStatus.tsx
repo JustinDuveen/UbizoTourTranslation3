@@ -275,9 +275,13 @@ export default function AudioSystemStatus({ languages, isActive }: AudioSystemSt
                 </div>
                 <div className="font-mono text-xs bg-white p-2 rounded border">
                   <div>audioDebug.diagnose()</div>
-                  <div>audioDebug.emergencyFix("italian")</div>
-                  <div>audioDebug.forceAudioCheck("italian")</div>
-                  <div>audioDebug.startMonitoring("italian")</div>
+                  {audioStatuses.map((status) => (
+                    <div key={status.language} className="text-blue-600">
+                      <div>audioDebug.emergencyFix("{status.language.toLowerCase()}")</div>
+                      <div>audioDebug.forceAudioCheck("{status.language.toLowerCase()}")</div>
+                      <div>audioDebug.startMonitoring("{status.language.toLowerCase()}")</div>
+                    </div>
+                  ))}
                 </div>
                 <div className="text-xs text-gray-600">
                   Last update: {lastUpdate.toLocaleTimeString()}

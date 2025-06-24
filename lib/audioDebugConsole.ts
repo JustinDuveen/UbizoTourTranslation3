@@ -341,10 +341,10 @@ if (typeof window !== 'undefined') {
   console.log('🛠️ AUDIO DEBUG CONSOLE READY');
   console.log('📝 Available commands:');
   console.log('  • audioDebug.diagnose() - Complete system diagnosis');
-  console.log('  • audioDebug.checkAudioFlow("italian") - Check specific language');
-  console.log('  • audioDebug.emergencyFix("italian") - Emergency fix for language');
-  console.log('  • audioDebug.forceAudioCheck("italian") - Force check receivers');
-  console.log('  • audioDebug.testAudioForwarding("italian") - Test forwarding');
-  console.log('  • audioDebug.startMonitoring("italian") - Start monitoring');
+  console.log('  • audioDebug.checkAudioFlow("language") - Check specific language');
+  console.log('  • audioDebug.emergencyFix("language") - Emergency fix for language');
+  console.log('  • audioDebug.forceAudioCheck("language") - Force check receivers');
+  console.log('  • audioDebug.testAudioForwarding("language") - Test forwarding');
+  console.log('  • audioDebug.startMonitoring("language") - Start monitoring');
   console.log('✅ Use audioDebug.[command] in console');
 }
