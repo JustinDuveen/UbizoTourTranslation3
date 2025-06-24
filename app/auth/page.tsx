@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/use-toast"
+import type { AuthApiResponse } from "@/lib/auth"
 import {
   Mail,
   Lock,
@@ -55,10 +56,10 @@ export default function Auth() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       })
-      const loginData = await loginResponse.json()
+      const loginData: AuthApiResponse = await loginResponse.json()
       console.log("Login response:", loginData)
 
-      if (loginResponse.ok) {
+      if (loginResponse.ok && loginData.user && loginData.token) {
         // User exists and login successful
         document.cookie = `token=${loginData.token}; path=/;`
 
@@ -68,14 +69,23 @@ export default function Auth() {
         })
 
         console.log("Redirecting to:", loginData.user.role === "guide" ? "/guide" : "/attendee")
-        
+
         const redirectPath = loginData.user.role === "guide" ? "/guide" : "/attendee"
         setTimeout(() => {
           window.location.replace(redirectPath)
         }, 1000)
       } else {
         // Login failed - check if it's because user doesn't exist
-        if (loginData.error && (loginData.error.includes("not found") || loginData.error.includes("does not exist") || loginData.error.includes("Invalid credentials"))) {
+        // Use error code 400 (invalid_credentials) to detect non-existent users
+        const isUserNotFound = loginData.code === "400" ||
+          (loginData.error && (
+            loginData.error.includes("not found") ||
+            loginData.error.includes("does not exist") ||
+            loginData.error.includes("Invalid credentials") ||
+            loginData.error.includes("Invalid email or password")
+          ));
+
+        if (isUserNotFound) {
           // User doesn't exist, show register mode
           if (!isRegisterMode) {
             setIsRegisterMode(true)
@@ -93,10 +103,10 @@ export default function Auth() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ email, password, role }),
             })
-            const registerData = await registerResponse.json()
+            const registerData: AuthApiResponse = await registerResponse.json()
             console.log("Registration response:", registerData)
 
-            if (registerResponse.ok) {
+            if (registerResponse.ok && registerData.user && registerData.token) {
               document.cookie = `token=${registerData.token}; path=/;`
 
               toast({
@@ -105,7 +115,7 @@ export default function Auth() {
               })
 
               console.log("Redirecting to:", role === "guide" ? "/guide" : "/attendee")
-              
+
               const redirectPath = role === "guide" ? "/guide" : "/attendee"
               setTimeout(() => {
                 window.location.replace(redirectPath)
@@ -115,7 +125,7 @@ export default function Auth() {
               toast({
                 variant: "destructive",
                 title: "Registration Failed",
-                description: registerData.error,
+                description: registerData.error || "Registration failed. Please try again.",
               })
             }
           }
@@ -125,7 +135,7 @@ export default function Auth() {
           toast({
             variant: "destructive",
             title: "Login Failed",
-            description: loginData.error,
+            description: loginData.error || "Login failed. Please try again.",
           })
         }
       }

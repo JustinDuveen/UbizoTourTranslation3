@@ -7,6 +7,7 @@ export interface UserPayload {
   email: string
   role: "guide" | "attendee"
 }
+
 // Auth result type for better error handling
 export type AuthResult = {
   success: true;
@@ -14,6 +15,18 @@ export type AuthResult = {
 } | {
   success: false;
   error: string;
+  code?: string;
+}
+
+// API response types for frontend
+export interface AuthApiResponse {
+  token?: string;
+  user?: {
+    id: string;
+    email: string;
+    role: "guide" | "attendee";
+  };
+  error?: string;
   code?: string;
 }
 

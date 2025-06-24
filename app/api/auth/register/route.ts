@@ -10,7 +10,10 @@ export async function POST(request: Request) {
 
   if (!result.success) {
     console.log("User creation failed:", result.error)
-    return NextResponse.json({ error: result.error }, { status: 400 })
+    return NextResponse.json({
+      error: result.error,
+      code: result.code
+    }, { status: 400 })
   }
 
   const token = generateToken(result.user)

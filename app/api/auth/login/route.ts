@@ -11,7 +11,10 @@ export async function POST(request: Request) {
 
   if (!result.success) {
     console.log("Authentication failed:", result.error)
-    return NextResponse.json({ error: result.error }, { status: 401 })
+    return NextResponse.json({
+      error: result.error,
+      code: result.code
+    }, { status: 401 })
   }
 
   const token = generateToken(result.user)
