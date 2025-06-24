@@ -1983,12 +1983,17 @@ async function pollForAttendeeIceCandidates(
 
   const pollInterval = setInterval(async () => {
     try {
-      // Check if connection is still active
+      // Check if connection is still active or successfully connected
       if (
+        attendeePC.iceConnectionState === 'connected' ||
+        attendeePC.iceConnectionState === 'completed' ||
         attendeePC.connectionState === 'closed' ||
         attendeePC.connectionState === 'failed' ||
         attendeePC.connectionState === 'disconnected'
       ) {
+        if (attendeePC.iceConnectionState === 'connected' || attendeePC.iceConnectionState === 'completed') {
+          console.log(`${langContext} 🔍 GUIDE ICE POLLING: ✅ Connection established, stopping ICE polling for attendee ${attendeeId}`);
+        }
         clearInterval(pollInterval);
         return;
       }

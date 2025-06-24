@@ -1519,13 +1519,19 @@ function startIceCandidatePolling(pc: RTCPeerConnection, language: string, tourI
 
   const pollInterval = setInterval(async () => {
     try {
-      // Check if connection is still active
+      // Check if connection is still active or successfully connected
       if (
+        pc.iceConnectionState === 'connected' ||
+        pc.iceConnectionState === 'completed' ||
         pc.connectionState === 'closed' ||
         pc.connectionState === 'failed' ||
         pc.connectionState === 'disconnected'
       ) {
-        console.log(`${langContext} [ATTENDEE-ICE-POLL] Connection closed/failed, stopping ICE candidate polling`);
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          console.log(`${langContext} [ATTENDEE-ICE-POLL] ✅ Connection established, stopping ICE candidate polling`);
+        } else {
+          console.log(`${langContext} [ATTENDEE-ICE-POLL] Connection closed/failed, stopping ICE candidate polling`);
+        }
         clearInterval(pollInterval);
         return;
       }
