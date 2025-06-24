@@ -31,9 +31,7 @@ export function getStaticXirsysICEServers(): RTCIceServer[] {
         "turn:jb-turn1.xirsys.com:80?transport=udp",
         "turn:jb-turn1.xirsys.com:3478?transport=udp", 
         "turn:jb-turn1.xirsys.com:80?transport=tcp",
-        "turn:jb-turn1.xirsys.com:3478?transport=tcp",
-        "turns:jb-turn1.xirsys.com:443?transport=tcp",
-        "turns:jb-turn1.xirsys.com:5349?transport=tcp"
+        "turn:jb-turn1.xirsys.com:3478?transport=tcp"
       ]
     }
   ];
