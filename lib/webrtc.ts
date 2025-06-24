@@ -201,10 +201,10 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
     await pc.setRemoteDescription(validatedOffer);
     console.log(`${langContext} Remote description set successfully - ICE gathering should start immediately`);
 
-    // Create and set local answer
+    // Create and set local answer (attendee is ICE controlled)
     const answer = await pc.createAnswer({
       offerToReceiveAudio: true,
-      voiceActivityDetection: false
+      offerToReceiveVideo: false
     });
 
     // Fix SDP directionality - attendee receives audio only (recvonly)
@@ -227,6 +227,13 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
         console.log(`${langContext} Fixed attendee SDP directionality: recvonly (audio from guide)`);
       } else {
         console.warn(`${langContext} No audio m-line found in SDP, skipping direction modification`);
+      }
+      
+      // Ensure attendee is ICE controlled (responding role)
+      if (modifiedSdp && !modifiedSdp.includes('a=ice-options')) {
+        console.log(`${langContext} ✅ Attendee correctly in ICE controlled role`);
+      } else {
+        console.warn(`${langContext} ⚠️ ICE role conflict detected in SDP`);
       }
     }
 
@@ -256,6 +263,39 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
 
     // Create ICE connection monitor
     const iceMonitor = createICEMonitor(pc, normalizedLanguage, 'attendee', attendeeId, 30000);
+    
+    // Enhanced ICE role debugging for attendee
+    pc.addEventListener('iceconnectionstatechange', () => {
+      if (pc.iceConnectionState === 'checking') {
+        console.log(`${langContext} 🔍 ICE ROLE DEBUG: Attendee entering connectivity checks phase`);
+        
+        setTimeout(() => {
+          pc.getStats().then(stats => {
+            let candidatePairs: Array<{state: string; nominated: boolean}> = [];
+            stats.forEach(report => {
+              if (report.type === 'candidate-pair') {
+                candidatePairs.push({
+                  state: report.state,
+                  nominated: report.nominated
+                });
+              }
+            });
+            
+            const inProgress = candidatePairs.filter(p => p.state === 'in-progress').length;
+            const waiting = candidatePairs.filter(p => p.state === 'waiting').length;
+            const succeeded = candidatePairs.filter(p => p.state === 'succeeded').length;
+            
+            console.log(`${langContext} 📊 ICE ATTENDEE PROGRESS: ${inProgress} in-progress, ${waiting} waiting, ${succeeded} succeeded`);
+            
+            if (inProgress === 0 && waiting > 0 && succeeded === 0) {
+              console.error(`${langContext} 🚨 ICE ROLE DEADLOCK: All ${waiting} pairs waiting, no checks initiated by guide!`);
+            } else if (inProgress > 0) {
+              console.log(`${langContext} ✅ ICE CHECKS ACTIVE: Guide successfully initiating connectivity checks`);
+            }
+          });
+        }, 2000); // Check 2 seconds after entering checking state
+      }
+    });
     
     // Start monitoring with enhanced timeout handling
     iceMonitor.startMonitoring((event: ICETimeoutEvent) => {
@@ -1306,7 +1346,7 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
   // Create and set local answer
   const answer = await pc.createAnswer({
     offerToReceiveAudio: true,
-    voiceActivityDetection: false
+    offerToReceiveVideo: false
   });
 
   // Fix SDP directionality - attendee receives audio only (recvonly)

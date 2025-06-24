@@ -238,9 +238,9 @@ export default function Home() {
                     <Star className="h-4 w-4 text-yellow-900" />
                   </div>
                 </div>
-                <CardTitle className="text-3xl font-bold text-white mb-2">Tour Guide</CardTitle>
-                <CardDescription className="text-white/80 text-lg">
-                  Lead multilingual tours with professional broadcasting tools
+                <CardTitle className="text-3xl font-bold text-black mb-2">Tour Guide</CardTitle>
+                <CardDescription className="text-black/80 text-lg">
+                  Lead tours in your language while AI translates for attendees
                 </CardDescription>
               </CardHeader>
 
@@ -287,8 +287,8 @@ export default function Home() {
                     <Zap className="h-4 w-4 text-blue-900" />
                   </div>
                 </div>
-                <CardTitle className="text-3xl font-bold text-white mb-2">Tour Attendee</CardTitle>
-                <CardDescription className="text-white/80 text-lg">
+                <CardTitle className="text-3xl font-bold text-black mb-2">Tour Attendee</CardTitle>
+                <CardDescription className="text-black/80 text-lg">
                   Join any tour and enjoy seamless real-time translation
                 </CardDescription>
               </CardHeader>

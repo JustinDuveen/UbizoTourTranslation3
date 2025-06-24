@@ -901,9 +901,13 @@ async function setupOpenAIConnection(
     }
   };
 
-  // Create and set local description
+  // Create and set local description (Guide is ICE controlling for OpenAI)
   try {
-    const offer = await openaiPC.createOffer();
+    const offer = await openaiPC.createOffer({
+      iceRestart: false,
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: false
+    });
 
     // Enhance the SDP for better audio compatibility
     let modifiedSdp = offer.sdp;
@@ -1444,8 +1448,9 @@ async function processAttendeeAnswer(
 
       console.log(`${langContext} Processed ${audioTracks.length} OpenAI audio track(s) for attendee ${attendeeId} connection`);
 
-      // Create offer for this attendee connection
+      // Create offer for this attendee connection (Guide is ICE controlling)
       const offer = await attendeePC.createOffer({
+        iceRestart: false,
         offerToReceiveAudio: false, // Guide sends audio, doesn't receive
         offerToReceiveVideo: false
       });
@@ -1656,7 +1661,11 @@ async function processAttendeeAnswer(
             
             // CRITICAL: Create new offer with audio tracks for renegotiation
             console.log(`${langContext} 🔄 Creating new offer with audio tracks for attendee ${attendeeId}`);
-            attendeePC.createOffer().then(newOffer => {
+            attendeePC.createOffer({
+              iceRestart: false,
+              offerToReceiveAudio: false,
+              offerToReceiveVideo: false
+            }).then(newOffer => {
               return attendeePC.setLocalDescription(newOffer).then(() => {
                 // Store the new offer so attendee can get it
                 return fetch('/api/tour/offer', {
@@ -1827,10 +1836,39 @@ async function createAttendeeConnection(
     console.log(`${langContext} [GUIDE-ICE] ICE gathering state changed to: ${attendeePC.iceGatheringState} for attendee ${attendeeId}`);
   };
   
-  // Monitor ICE connection state changes
+  // Monitor ICE connection state changes with enhanced role debugging
   attendeePC.oniceconnectionstatechange = () => {
     console.log(`${langContext} [GUIDE-ICE] ICE connection state changed to: ${attendeePC.iceConnectionState} for attendee ${attendeeId}`);
-    if (attendeePC.iceConnectionState === 'connected') {
+    
+    if (attendeePC.iceConnectionState === 'checking') {
+      console.log(`${langContext} 🔍 ICE ROLE DEBUG: Guide entering connectivity checks phase for attendee ${attendeeId}`);
+      
+      setTimeout(() => {
+        attendeePC.getStats().then(stats => {
+          let candidatePairs: Array<{state: string; nominated: boolean}> = [];
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair') {
+              candidatePairs.push({
+                state: report.state,
+                nominated: report.nominated
+              });
+            }
+          });
+          
+          const inProgress = candidatePairs.filter(p => p.state === 'in-progress').length;
+          const waiting = candidatePairs.filter(p => p.state === 'waiting').length;
+          const succeeded = candidatePairs.filter(p => p.state === 'succeeded').length;
+          
+          console.log(`${langContext} 📊 ICE GUIDE PROGRESS: ${inProgress} in-progress, ${waiting} waiting, ${succeeded} succeeded`);
+          
+          if (inProgress === 0 && waiting > 0 && succeeded === 0) {
+            console.error(`${langContext} 🚨 ICE ROLE FAILURE: Guide not initiating checks - ${waiting} pairs stuck waiting!`);
+          } else if (inProgress > 0) {
+            console.log(`${langContext} ✅ ICE CONTROL ACTIVE: Guide successfully controlling connectivity checks`);
+          }
+        });
+      }, 2000); // Check 2 seconds after entering checking state
+    } else if (attendeePC.iceConnectionState === 'connected') {
       console.log(`${langContext} [GUIDE-ICE] 🎉 ICE connection ESTABLISHED with attendee ${attendeeId}!`);
     } else if (attendeePC.iceConnectionState === 'failed') {
       console.error(`${langContext} [GUIDE-ICE] ❌ ICE connection FAILED with attendee ${attendeeId}`);
