@@ -46,12 +46,14 @@ export class EnterpriseSDPManager {
    */
   static async createOptimizedOffer(
     pc: RTCPeerConnection,
-    config: Partial<SDPOptimizationConfig> = {}
+    config: Partial<SDPOptimizationConfig> = {},
+    iceRestart: boolean = false
   ): Promise<RTCSessionDescriptionInit> {
     const offer = await pc.createOffer({
       // ICE controlling role for guide (initiates connectivity checks)
       offerToReceiveAudio: true,
-      offerToReceiveVideo: false
+      offerToReceiveVideo: false,
+      iceRestart: iceRestart
     });
 
     const optimizedOffer = this.optimizeSDPForEnterprise(offer, config);

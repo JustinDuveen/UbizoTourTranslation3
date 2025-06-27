@@ -1979,10 +1979,8 @@ async function createAttendeeConnection(
             });
 
             // ENTERPRISE: Force ICE restart with optimized offer
-            EnterpriseSDPManager.createOptimizedOffer(attendeePC).then(offer => {
-              // Manually restart ICE
-              attendeePC.restartIce();
-              console.log(`${langContext} [GUIDE-ICE] 🔄 ICE restart offer created for attendee ${attendeeId} (attempt ${restartInfo.attempts})`);
+            EnterpriseSDPManager.createOptimizedOffer(attendeePC, {}, true).then(offer => {
+              console.log(`${langContext} [GUIDE-ICE] 🔄 ICE restart offer created with iceRestart:true for attendee ${attendeeId} (attempt ${restartInfo.attempts})`);
               return attendeePC.setLocalDescription(offer);
             }).then(() => {
               console.log(`${langContext} [GUIDE-ICE] ✅ Guide ICE restart initiated for attendee ${attendeeId} - should generate more candidates`);
