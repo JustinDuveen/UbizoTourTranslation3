@@ -146,8 +146,10 @@ export async function POST(request: Request) {
       // Construct the verification URL
       let baseUrl = '';
       if (typeof window === 'undefined') {
-        // Server-side: use internal URL
-        baseUrl = 'http://localhost:3000';
+        // Server-side: use Railway-compatible internal URL
+        baseUrl = process.env.RAILWAY_STATIC_URL || 
+                  process.env.NEXT_PUBLIC_API_URL || 
+                  `http://localhost:${process.env.PORT || 3000}`;
       } else {
         // Client-side: use public URL
         baseUrl = process.env.NEXT_PUBLIC_API_BASE || '';
