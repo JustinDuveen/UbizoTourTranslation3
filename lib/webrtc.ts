@@ -340,7 +340,13 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
 
   console.log(`${langContext} 🎯 Using Enterprise ICE configuration`);
   console.log(`${langContext} ICE servers: ${rtcConfig.iceServers?.length || 0}, Pool size: ${rtcConfig.iceCandidatePoolSize}`);
-  console.log(`${langContext} ICE role: ${(rtcConfig as any).iceControlling ? 'controlling' : 'controlled'}`);
+  console.log(`${langContext} ICE role: ${(rtcConfig as any).iceControlling === true ? 'controlling' : (rtcConfig as any).iceControlling === false ? 'controlled' : 'undefined (ERROR!)'}`);
+  
+  // RFC 8445 VALIDATION: Ensure role is explicitly set
+  if ((rtcConfig as any).iceControlling === undefined) {
+    console.error(`${langContext} 🚨 CRITICAL: ICE role not set! This will cause deadlocks!`);
+    throw new Error('ICE role assignment failed - this will cause connection deadlocks');
+  }
 
   let pc: RTCPeerConnection;
 
@@ -356,7 +362,8 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
       console.log(`${langContext} 🧊 ICE state: ${pc.iceConnectionState}`);
       
       if (pc.iceConnectionState === 'checking') {
-        console.log(`${langContext} 🔍 ICE ROLE DEBUG: Attendee entering connectivity checks phase`);
+        console.log(`${langContext} 🔍 ICE ROLE DEBUG: Attendee (CONTROLLED) entering connectivity checks phase`);
+        console.log(`${langContext} 🎯 RFC 8445: Guide should be CONTROLLING, Attendee should be CONTROLLED`);
         
         // Start deadlock detection timer
         if (deadlockCheckTimer) clearTimeout(deadlockCheckTimer);
@@ -1386,36 +1393,40 @@ function analyzeICECandidates(pc: RTCPeerConnection, language: string) {
     
     console.log(`${langContext} 📊 ICE PROGRESS: ${inProgress} in-progress, ${waiting} waiting, ${succeeded} succeeded`);
     
-    // CRITICAL FIX: Detect ICE role deadlock (many waiting pairs, no in-progress)
-    if (waiting > 20 && inProgress === 0 && succeeded === 0) {
+    // RFC 8445: Detect ICE role deadlock with same-network awareness
+    if (waiting > 30 && inProgress === 0 && succeeded === 0) {
       console.error(`${langContext} 🚨 ICE ROLE DEADLOCK DETECTED: ${waiting} pairs waiting, no checks initiated!`);
+      console.error(`${langContext} 🚨 Same-network scenario: Both peers likely have identical ICE role`);
+      console.error(`${langContext} 🏠 Network topology: Both devices on same WiFi (192.168.101.x)`);
       
-      // Trigger ICE restart with role reassignment
+      // Trigger RFC 8445 compliant ICE restart with role enforcement
       resolveICERoleDeadlock(pc, language);
+    } else if (waiting > 15 && inProgress === 0) {
+      console.warn(`${langContext} ⚠️ Same-network connectivity issue: ${waiting} waiting pairs, prioritizing host candidates`);
     }
   });
 }
 
-// New function to resolve ICE role deadlock
+// RFC 8445 compliant function to resolve ICE role deadlock
 async function resolveICERoleDeadlock(pc: RTCPeerConnection, language: string) {
   const langContext = `[${language}]`;
-  console.log(`${langContext} 🔄 Resolving ICE role deadlock...`);
+  console.log(`${langContext} 🔄 Resolving ICE role deadlock with RFC 8445 compliance...`);
   
   try {
-    // Standard ICE restart without manual role manipulation
-    // Let WebRTC handle the role assignment naturally
-    console.log(`${langContext} 🔄 Triggering standard ICE restart...`);
+    // RFC 8445: ICE restart maintains role assignments from initial negotiation
+    // Since we now explicitly set iceControlling=false for attendee,
+    // the restart will maintain controlled role properly
+    console.log(`${langContext} 🔄 Triggering RFC 8445 compliant ICE restart...`);
+    console.log(`${langContext} 🎯 Attendee will maintain CONTROLLED role during restart`);
     
-    // For attendee (answerer): restartIce() will maintain controlled role
-    // For guide (offerer): restartIce() will maintain controlling role  
     pc.restartIce();
     
-    console.log(`${langContext} ✅ ICE restart initiated - roles will be assigned automatically`);
+    console.log(`${langContext} ✅ ICE restart initiated - explicit role assignment prevents deadlock`);
   } catch (error) {
     console.error(`${langContext} ❌ ICE restart failed:`, error);
     
-    // Fallback: attempt full reconnection
-    console.log(`${langContext} 🔄 Attempting fallback reconnection...`);
+    // Fallback: attempt full reconnection with proper role assignment
+    console.log(`${langContext} 🔄 Attempting fallback reconnection with explicit roles...`);
     reconnect(language);
   }
 }

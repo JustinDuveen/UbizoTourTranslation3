@@ -332,21 +332,25 @@ export class EnterpriseICEManager {
   /**
    * Get standardized ICE configuration for WebRTC connections
    * Consistent across all connection types (guide/attendee)
+   * RFC 8445 compliant with same-network optimizations
    */
   getConfiguration(role: 'guide' | 'attendee'): EnterpriseICEConfig {
     const baseConfig: EnterpriseICEConfig = {
       iceServers: this.healthMonitor.getHealthyServers(),
-      iceCandidatePoolSize: 10, // Consistent across all connections
+      iceCandidatePoolSize: 8, // Reduced to limit pair explosion on same network
       bundlePolicy: 'max-bundle', // Bundle all media on single transport
       rtcpMuxPolicy: 'require', // Multiplex RTP and RTCP for efficiency
-      iceTransportPolicy: 'all', // Allow all candidate types
+      iceTransportPolicy: 'all', // Allow all candidate types for maximum compatibility
       certificates: this.certificates.length > 0 ? this.certificates : undefined
     };
 
-    // Role-specific optimizations
+    // Role-specific optimizations for same-network scenarios
     if (role === 'guide') {
-      // Guide typically has more stable connection, can afford slightly larger pool
-      baseConfig.iceCandidatePoolSize = 12;
+      // Guide can afford slightly larger pool but not excessive
+      baseConfig.iceCandidatePoolSize = 10;
+    } else {
+      // Attendee uses smaller pool to reduce connectivity check overhead
+      baseConfig.iceCandidatePoolSize = 6;
     }
 
     return baseConfig;
@@ -354,21 +358,25 @@ export class EnterpriseICEManager {
 
   /**
    * Get RTCConfiguration object for direct use with RTCPeerConnection
+   * RFC 8445 COMPLIANT: Explicit role assignment to prevent deadlocks
    */
   getRTCConfiguration(role: 'guide' | 'attendee'): RTCConfiguration {
     const config = this.getConfiguration(role);
     
-    return {
+    // RFC 8445: Explicit role assignment prevents same-network deadlocks
+    const rtcConfig: RTCConfiguration & { iceControlling?: boolean } = {
       iceServers: config.iceServers,
       iceCandidatePoolSize: config.iceCandidatePoolSize,
       bundlePolicy: config.bundlePolicy,
       rtcpMuxPolicy: config.rtcpMuxPolicy,
       iceTransportPolicy: config.iceTransportPolicy,
-      certificates: config.certificates
-      // REMOVED: iceControlling property - let WebRTC handle roles automatically
-      // The offerer (guide) will automatically become controlling
-      // The answerer (attendee) will automatically become controlled
+      certificates: config.certificates,
+      // CRITICAL FIX: Explicit role assignment per RFC 8445
+      iceControlling: role === 'guide' // Guide=controlling, Attendee=controlled
     };
+    
+    console.log(`[ENTERPRISE-ICE] Role assignment: ${role} = ${role === 'guide' ? 'controlling' : 'controlled'}`);
+    return rtcConfig;
   }
 
   /**

@@ -14,7 +14,10 @@
       "Bash(npm run build:*)",
       "Bash(timeout 60 npm run build:*)",
       "Bash(cat:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:webrtc.org)",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:datatracker.ietf.org)"
     ],
     "deny": []
   }
