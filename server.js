@@ -55,19 +55,14 @@ app.prepare().then(() => {
   const server = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
     
-    // Railway health check endpoint
-    if (parsedUrl.pathname === '/health') {
+    // Railway health check endpoints (multiple variants)
+    if (parsedUrl.pathname === '/health' || parsedUrl.pathname === '/healthz' || parsedUrl.pathname === '/') {
       res.writeHead(200, { 
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache'
+        'Content-Type': 'text/plain',
+        'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*'
       });
-      res.end(JSON.stringify({
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        port: port
-      }));
+      res.end('OK');
       return;
     }
     
