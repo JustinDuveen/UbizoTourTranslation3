@@ -54,6 +54,14 @@ function getLocalIP() {
 app.prepare().then(() => {
   const server = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
+    
+    // Railway health check endpoint
+    if (parsedUrl.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('OK');
+      return;
+    }
+    
     handle(req, res, parsedUrl);
   });
 
@@ -171,5 +179,23 @@ app.prepare().then(() => {
     console.log('> Share this URL with devices on your network to allow them to join as attendees');
     console.log('> 🚀 WebSocket signaling server initialized at /socket.io/');
     console.log(`> 📡 Socket.IO server ready for WebRTC signaling on all interfaces`);
+    console.log(`> Railway deployment: Server bound to ${host}:${port}`);
+  });
+
+  // Handle Railway deployment signals
+  process.on('SIGTERM', () => {
+    console.log('📤 Received SIGTERM, shutting down gracefully...');
+    server.close(() => {
+      console.log('✅ Server closed. Process terminating.');
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', () => {
+    console.log('📤 Received SIGINT, shutting down gracefully...');
+    server.close(() => {
+      console.log('✅ Server closed. Process terminating.');
+      process.exit(0);
+    });
   });
 });
