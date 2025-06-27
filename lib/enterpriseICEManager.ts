@@ -365,6 +365,9 @@ export class EnterpriseICEManager {
       rtcpMuxPolicy: config.rtcpMuxPolicy,
       iceTransportPolicy: config.iceTransportPolicy,
       certificates: config.certificates
+      // REMOVED: iceControlling property - let WebRTC handle roles automatically
+      // The offerer (guide) will automatically become controlling
+      // The answerer (attendee) will automatically become controlled
     };
   }
 
@@ -392,3 +395,6 @@ export class EnterpriseICEManager {
 
 // Export singleton instance for easy access
 export const enterpriseICE = EnterpriseICEManager.getInstance();
+
+
+

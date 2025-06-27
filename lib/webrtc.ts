@@ -180,146 +180,39 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
       cleanupConnection(normalizedLanguage);
     }
 
-    // Initialize WebSocket signaling first (we'll update the attendeeId after getting it from the server)
+    // CRITICAL FIX: Ensure complete signaling sequence with proper timing
+    // Step 1: Initialize signaling first
     console.log(`${langContext} Initializing WebSocket signaling for attendee...`);
     let signalingClient = await initializeSignaling(tourCode, normalizedLanguage, 'attendee', existingAttendeeId);
     
     if (!signalingClient) {
       console.warn(`${langContext} Failed to initialize WebSocket signaling, falling back to HTTP polling`);
     } else {
-      console.log(`${langContext} ✅ WebSocket signaling initialized successfully (will update attendeeId after server response)`);
+      console.log(`${langContext} ✅ WebSocket signaling initialized successfully`);
     }
 
-    // Fetch tour offer
-    const { offer, tourId, placeholder } = await fetchTourOffer(tourCode, normalizedLanguage, attendeeName);
-    localStorage.setItem('currentTourId', tourId);
-
-    if (placeholder) {
-      throw new Error('PLACEHOLDER_OFFER_RECEIVED');
-    }
-
-    // Create peer connection with immediate ICE handling (aligned with guide behavior)
-    const { pc, audioEl } = await createPeerConnection(normalizedLanguage, tourCode, true); // Pass true to enable immediate ICE handling
-
-    // ENTERPRISE: Set remote description using Enterprise SDP Manager
-    console.log(`${langContext} Setting remote description from guide offer using Enterprise SDP Manager...`);
-    const validatedOffer = EnterpriseSDPManager.validateAndFormatSDP(offer);
-    await pc.setRemoteDescription(validatedOffer);
-    console.log(`${langContext} Remote description set successfully - ICE gathering should start immediately`);
-
-    // ENTERPRISE: Create optimized answer using Enterprise SDP Manager
-    const answer = await EnterpriseSDPManager.createOptimizedAnswer(pc);
-    console.log(`${langContext} Enterprise-optimized answer created`);
-
-    // Fix SDP directionality - attendee receives audio only (recvonly)
-    let modifiedSdp = answer.sdp;
-    if (modifiedSdp) {
-      console.log(`${langContext} Original SDP direction attributes:`, 
-        (modifiedSdp.match(/a=(sendrecv|sendonly|recvonly|inactive)/g) || []).join(', '));
-      
-      // Check if audio m-line exists before modifying
-      if (modifiedSdp.includes('m=audio')) {
-        // Remove any existing direction attributes to avoid conflicts
-        modifiedSdp = modifiedSdp.replace(/a=(sendrecv|sendonly|recvonly|inactive)\r?\n/g, '');
-
-        // Add recvonly after the audio m-line since attendee only receives audio
-        modifiedSdp = modifiedSdp.replace(
-          /(m=audio[^\r\n]*\r?\n)/,
-          '$1a=recvonly\r\n'
-        );
-        
-        console.log(`${langContext} Fixed attendee SDP directionality: recvonly (audio from guide)`);
-      } else {
-        console.warn(`${langContext} No audio m-line found in SDP, skipping direction modification`);
-      }
-      
-      // Ensure attendee is ICE controlled (responding role)
-      if (modifiedSdp && !modifiedSdp.includes('a=ice-options')) {
-        console.log(`${langContext} ✅ Attendee correctly in ICE controlled role`);
-      } else {
-        console.warn(`${langContext} ⚠️ ICE role conflict detected in SDP`);
-      }
-    }
-
-    const modifiedAnswer = new RTCSessionDescription({
-      type: 'answer',
-      sdp: modifiedSdp
-    });
-
-    await pc.setLocalDescription(modifiedAnswer);
-    console.log(`${langContext} Local description (answer) set successfully`);
+    // Step 2: Create peer connection with proper ICE role
+    console.log(`${langContext} Creating peer connection with proper ICE role assignment...`);
+    const { pc, audioEl } = await createPeerConnection(normalizedLanguage, tourCode, false); // Defer ICE handling
     
-    // Log ICE gathering state after setting both descriptions
-    console.log(`${langContext} ICE gathering state after SDP exchange: ${pc.iceGatheringState}`);
-    console.log(`${langContext} ICE connection state after SDP exchange: ${pc.iceConnectionState}`);
-
-    // Complete signaling by sending answer to get attendeeId
-    console.log(`${langContext} Sending answer to guide...`);
-    const { attendeeId } = await completeSignaling(pc, normalizedLanguage, tourId, offer, attendeeName, existingAttendeeId, signalingClient);
-    console.log(`${langContext} Answer sent successfully with attendeeId: ${attendeeId}`);
-
-    // EXPERT FIX: Update attendeeId without disrupting WebSocket connection
-    if (signalingClient) {
-      console.log(`${langContext} ✅ WebSocket signaling continues with attendeeId: ${attendeeId}`);
-      // No reconnection needed - the connection is already established and working
-      // The attendeeId is sent in messages, not stored in the connection itself
-    }
-
-    // Create ICE connection monitor
-    const iceMonitor = createICEMonitor(pc, normalizedLanguage, 'attendee', attendeeId, 30000);
+    // Step 3: Get offer from guide (with proper error handling for placeholder offers)
+    console.log(`${langContext} Fetching offer from guide...`);
+    const offerData = await fetchTourOffer(tourCode, normalizedLanguage, attendeeName || 'Anonymous');
     
-    // Enhanced ICE role debugging for attendee
-    pc.addEventListener('iceconnectionstatechange', () => {
-      if (pc.iceConnectionState === 'checking') {
-        console.log(`${langContext} 🔍 ICE ROLE DEBUG: Attendee entering connectivity checks phase`);
-        
-        setTimeout(() => {
-          pc.getStats().then(stats => {
-            let candidatePairs: Array<{state: string; nominated: boolean}> = [];
-            stats.forEach(report => {
-              if (report.type === 'candidate-pair') {
-                candidatePairs.push({
-                  state: report.state,
-                  nominated: report.nominated
-                });
-              }
-            });
-            
-            const inProgress = candidatePairs.filter(p => p.state === 'in-progress').length;
-            const waiting = candidatePairs.filter(p => p.state === 'waiting').length;
-            const succeeded = candidatePairs.filter(p => p.state === 'succeeded').length;
-            
-            console.log(`${langContext} 📊 ICE ATTENDEE PROGRESS: ${inProgress} in-progress, ${waiting} waiting, ${succeeded} succeeded`);
-            
-            if (inProgress === 0 && waiting > 0 && succeeded === 0) {
-              console.error(`${langContext} 🚨 ICE ROLE DEADLOCK: All ${waiting} pairs waiting, no checks initiated by guide!`);
-            } else if (inProgress > 0) {
-              console.log(`${langContext} ✅ ICE CHECKS ACTIVE: Guide successfully initiating connectivity checks`);
-            }
-          });
-        }, 2000); // Check 2 seconds after entering checking state
-      }
-    });
+    // Step 4-6: Complete the full signaling exchange including answer
+    console.log(`${langContext} Completing signaling exchange...`);
+    const { attendeeId } = await completeSignaling(pc, normalizedLanguage, offerData.tourId, offerData, attendeeName || 'Anonymous', existingAttendeeId, signalingClient);
     
-    // Start monitoring with enhanced timeout handling
-    iceMonitor.startMonitoring((event: ICETimeoutEvent) => {
-      console.error(`${langContext} ICE timeout for attendee ${attendeeId}:`, event.analysis.failureReason);
-      handleICETimeout(event);
-      
-      // Trigger reconnection with exponential backoff
-      const connection = connections.get(language);
-      if (connection && !connection.isReconnecting) {
-        scheduleReconnection(normalizedLanguage, `ICE timeout: ${event.analysis.failureReason}`);
-      }
-    });
-
-    // Now that we have attendeeId, enable full ICE candidate handling and process pending candidates
-    console.log(`${langContext} Enabling full ICE candidate handling with attendeeId: ${attendeeId}`);
-    enableIceCandidateHandling(pc, normalizedLanguage, tourId, attendeeId, signalingClient);
+    // Step 7: NOW enable ICE candidate handling (after SDP exchange is complete)
+    console.log(`${langContext} Enabling ICE candidate handling...`);
+    enableIceCandidateHandling(pc, normalizedLanguage, offerData.tourId, attendeeId, signalingClient);
 
     // Set up key refresh
     const keyRefreshTimer = setupKeyRefresh(normalizedLanguage);
 
+    // Initialize ICE monitor
+    const iceMonitor = createICEMonitor(pc, normalizedLanguage, 'attendee', attendeeId);
+    
     // Store connection with the correct attendeeId from answer
     connections.set(normalizedLanguage, {
       pc,
@@ -334,7 +227,7 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
     });
 
     // Set up media handlers with debugging context
-    setupMediaHandlers(pc, audioEl, onTranslation, normalizedLanguage, tourCode, tourId, attendeeId);
+    setupMediaHandlers(pc, audioEl, onTranslation, normalizedLanguage, tourCode, offerData.tourId, attendeeId);
 
     // Setup WebSocket handlers for real-time signaling or fall back to polling
     if (signalingClient) {
@@ -368,11 +261,11 @@ export async function initWebRTC(options: WebRTCOptions): Promise<WebRTCConnecti
       
       // CRITICAL FIX: Start HTTP polling ALONGSIDE WebSocket for reliability
       console.log(`${langContext} Starting dual-path ICE delivery: WebSocket + HTTP polling`);
-      startIceCandidatePolling(pc, normalizedLanguage, tourId, attendeeId);
+      startIceCandidatePolling(pc, normalizedLanguage, offerData.tourId, attendeeId);
     } else {
       // Fall back to HTTP polling only
       console.log(`${langContext} Falling back to HTTP polling for ICE candidates...`);
-      startIceCandidatePolling(pc, normalizedLanguage, tourId, attendeeId);
+      startIceCandidatePolling(pc, normalizedLanguage, offerData.tourId, attendeeId);
     }
 
     console.log(`${langContext} WebRTC initialization completed successfully`);
@@ -447,6 +340,7 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
 
   console.log(`${langContext} 🎯 Using Enterprise ICE configuration`);
   console.log(`${langContext} ICE servers: ${rtcConfig.iceServers?.length || 0}, Pool size: ${rtcConfig.iceCandidatePoolSize}`);
+  console.log(`${langContext} ICE role: ${(rtcConfig as any).iceControlling ? 'controlling' : 'controlled'}`);
 
   let pc: RTCPeerConnection;
 
@@ -455,6 +349,29 @@ async function createPeerConnection(language: string, tourCode: string, enableIc
     pc = new RTCPeerConnection(rtcConfig);
     console.log(`${langContext} ✅ Enterprise peer connection created successfully`);
 
+    // CRITICAL FIX: Add enhanced ICE monitoring with deadlock detection
+    let deadlockCheckTimer: NodeJS.Timeout | null = null;
+    
+    pc.addEventListener('iceconnectionstatechange', () => {
+      console.log(`${langContext} 🧊 ICE state: ${pc.iceConnectionState}`);
+      
+      if (pc.iceConnectionState === 'checking') {
+        console.log(`${langContext} 🔍 ICE ROLE DEBUG: Attendee entering connectivity checks phase`);
+        
+        // Start deadlock detection timer
+        if (deadlockCheckTimer) clearTimeout(deadlockCheckTimer);
+        deadlockCheckTimer = setTimeout(() => {
+          analyzeICECandidates(pc, language);
+        }, 5000); // Check after 5 seconds in checking state
+      } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        // Clear deadlock timer on success
+        if (deadlockCheckTimer) {
+          clearTimeout(deadlockCheckTimer);
+          deadlockCheckTimer = null;
+        }
+      }
+    });
+    
     // Log ICE server health status
     const healthStatus = iceManager.getHealthStatus();
     console.log(`${langContext} ICE server health status:`, Array.from(healthStatus.entries()).map(([url, status]) => ({
@@ -743,15 +660,25 @@ function setupMediaHandlers(
       audioEl.controls = true;
       audioEl.preload = 'auto';
       
-      // Critical mobile properties
+      // Critical mobile properties - iOS requires these for inline playback
       (audioEl as any).playsInline = true; // iOS requirement
       (audioEl as any).webkitPlaysInline = true; // Older iOS versions
-      (audioEl as any).disableRemotePlayback = true; // Prevent casting issues
+      (audioEl as any).disableRemotePlaybook = true; // Prevent casting issues
+      audioEl.setAttribute('playsinline', 'true'); // Standard attribute
+      audioEl.setAttribute('webkit-playsinline', 'true'); // WebKit prefix
+      
+      // iOS Safari specific optimizations
+      if (isIOS) {
+        // Force iOS to treat this as inline content
+        audioEl.setAttribute('x-webkit-airplay', 'deny');
+        audioEl.setAttribute('disablePictureInPicture', 'true');
+        // iOS Safari requires these for proper WebRTC audio handling
+        audioEl.load(); // Preload the audio element
+      }
       
       // Android-specific optimizations
       if (isAndroid) {
-        audioEl.setAttribute('playsinline', 'true');
-        audioEl.setAttribute('webkit-playsinline', 'true');
+        audioEl.setAttribute('preload', 'auto');
       }
 
       // EXPERT FIX 4: Prepare AudioContext early (before user interaction)
@@ -1018,21 +945,19 @@ function setupMediaHandlers(
         }
       };
 
-      // CRITICAL iPhone Chrome Fix: Force user interaction immediately for iOS Chrome
-      const isIOSChrome = isIOS && navigator.userAgent.includes('CriOS');
-      
-      if (isIOSChrome) {
-        console.log(`${langContext} 🍎 iPhone Chrome detected - forcing user interaction for audio unlock`);
-        // Skip autoplay attempt for iPhone Chrome, go straight to user interaction
-        console.warn(`${langContext} 📱 iPhone Chrome requires user interaction - creating audio unlock handler...`);
+      // CRITICAL iOS Fix: All iOS devices require user interaction for audio
+      // This includes iOS Safari, iOS Chrome, iOS Firefox, etc.
+      if (isIOS) {
+        console.log(`${langContext} 🍎 iOS device detected - user interaction required for audio unlock`);
+        console.warn(`${langContext} 📱 iOS requires user interaction - creating audio unlock handler...`);
       } else {
-        // Try immediate playback first for other browsers
+        // Try immediate playback first for non-iOS browsers
         const immediateSuccess = await attemptAudioPlayback(false);
         
         if (immediateSuccess) {
           return; // Success, no need for user interaction
         }
-        console.warn(`${langContext} ❌ Autoplay blocked, creating expert user interaction handler...`);
+        console.warn(`${langContext} ❌ Autoplay blocked, creating user interaction handler...`);
       }
       
       // EXPERT FIX 7: Enhanced user interaction handler
@@ -1104,20 +1029,21 @@ function setupMediaHandlers(
               playButton.textContent = '🔄 Starting Audio...';
               playButton.style.background = '#2196F3';
               
-              // CRITICAL iPhone Chrome Fix: Ensure AudioContext is created and resumed in user gesture
-              if (isIOSChrome && !globalAudioContext) {
+              // CRITICAL iOS Fix: Ensure AudioContext is created and resumed in user gesture
+              // This applies to both iOS Safari and iOS Chrome
+              if (isIOS && !globalAudioContext) {
                 try {
                   globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-                  console.log(`${langContext} 🍎 Created AudioContext for iPhone Chrome: ${globalAudioContext.state}`);
+                  console.log(`${langContext} 🍎 Created AudioContext for iOS: ${globalAudioContext.state}`);
                 } catch (error) {
                   console.error(`${langContext} Failed to create AudioContext:`, error);
                 }
               }
               
-              // Force AudioContext resume with user gesture for iPhone Chrome
-              if (isIOSChrome && globalAudioContext && globalAudioContext.state !== 'running') {
+              // Force AudioContext resume with user gesture for all iOS devices
+              if (isIOS && globalAudioContext && globalAudioContext.state !== 'running') {
                 await globalAudioContext.resume();
-                console.log(`${langContext} 🍎 AudioContext forced resume for iPhone Chrome: ${globalAudioContext.state}`);
+                console.log(`${langContext} 🍎 AudioContext resumed for iOS: ${globalAudioContext.state}`);
               }
               
               const success = await attemptAudioPlayback(true);
@@ -1323,30 +1249,21 @@ async function completeSignaling(pc: RTCPeerConnection, language: string, tourId
   const offer = EnterpriseSDPManager.validateAndFormatSDP(offerData);
   await pc.setRemoteDescription(offer);
 
-  // ENTERPRISE: Create optimized answer using Enterprise SDP Manager
-  const answer = await EnterpriseSDPManager.createOptimizedAnswer(pc);
-
-  // Fix SDP directionality - attendee receives audio only (recvonly)
-  let modifiedSdp = answer.sdp;
-  if (modifiedSdp) {
-    // Remove any existing direction attributes to avoid conflicts
-    modifiedSdp = modifiedSdp.replace(/a=(sendrecv|sendonly|recvonly|inactive)\r?\n/g, '');
-
-    // Add recvonly after the audio m-line since attendee only receives audio
-    modifiedSdp = modifiedSdp.replace(
-      /(m=audio[^\r\n]*\r?\n)/,
-      '$1a=recvonly\r\n'
-    );
-
-    console.log(`${langContext} Fixed attendee SDP directionality: recvonly (audio from guide)`);
+  // Set proper transceiver direction for attendee (receive-only audio)
+  const transceivers = pc.getTransceivers();
+  for (const transceiver of transceivers) {
+    if (transceiver.receiver.track && transceiver.receiver.track.kind === 'audio') {
+      // Attendee should only receive audio, not send
+      transceiver.direction = 'recvonly';
+      console.log(`${langContext} Set audio transceiver direction to recvonly`);
+    }
   }
 
-  const modifiedAnswer = new RTCSessionDescription({
-    type: 'answer',
-    sdp: modifiedSdp
-  });
-
-  await pc.setLocalDescription(modifiedAnswer);
+  // ENTERPRISE: Create optimized answer using Enterprise SDP Manager  
+  const answer = await EnterpriseSDPManager.createOptimizedAnswer(pc);
+  await pc.setLocalDescription(answer);
+  
+  console.log(`${langContext} Answer created with proper transceiver directions`);
 
   // Send answer to server using WebSocket if available, otherwise HTTP
   if (signalingClient) {
@@ -1447,86 +1364,59 @@ function validateAndFormatSDPLegacy(offerData: any): RTCSessionDescriptionInit {
 
 function analyzeICECandidates(pc: RTCPeerConnection, language: string) {
   const langContext = `[${language}]`;
-  console.log(`${langContext} [ATTENDEE-ICE] 🔍 Analyzing attendee's ICE candidates...`);
-
-  try {
-    // Get ICE candidate statistics
-    pc.getStats().then(stats => {
-      const localCandidates: any[] = [];
-      const remoteCandidates: any[] = [];
-      const candidatePairs: any[] = [];
-
-      stats.forEach(report => {
-        if (report.type === 'local-candidate') {
-          localCandidates.push(report);
-        } else if (report.type === 'remote-candidate') {
-          remoteCandidates.push(report);
-        } else if (report.type === 'candidate-pair') {
-          candidatePairs.push(report);
-        }
-      });
-
-      console.log(`${langContext} [ATTENDEE-ICE] 📊 Attendee ICE Analysis:`);
-      console.log(`${langContext} [ATTENDEE-ICE] Local candidates (generated by attendee): ${localCandidates.length}`, localCandidates);
-      console.log(`${langContext} [ATTENDEE-ICE] Remote candidates (from guide): ${remoteCandidates.length}`, remoteCandidates);
-      console.log(`${langContext} [ATTENDEE-ICE] Candidate pairs: ${candidatePairs.length}`, candidatePairs);
-
-      // Analyze candidate pair states in detail
-      const pairStates = candidatePairs.reduce((acc: any, pair: any) => {
-        acc[pair.state] = (acc[pair.state] || 0) + 1;
-        return acc;
-      }, {});
-
-      console.log(`${langContext} [ATTENDEE-ICE] 🔍 Candidate pair states:`, pairStates);
-
-      // Log details of failed/waiting pairs
-      const failedPairs = candidatePairs.filter((pair: any) => pair.state === 'failed');
-      const waitingPairs = candidatePairs.filter((pair: any) => pair.state === 'waiting');
-      const inProgressPairs = candidatePairs.filter((pair: any) => pair.state === 'in-progress');
-      const succeededPairs = candidatePairs.filter((pair: any) => pair.state === 'succeeded');
-
-      if (failedPairs.length > 0) {
-        console.warn(`${langContext} [ATTENDEE-ICE] ⚠️ ${failedPairs.length} failed candidate pairs:`, failedPairs.slice(0, 3));
+  
+  pc.getStats().then(stats => {
+    const candidatePairs: RTCIceCandidatePairStats[] = [];
+    const localCandidates: RTCStats[] = [];
+    const remoteCandidates: RTCStats[] = [];
+    
+    stats.forEach(report => {
+      if (report.type === 'candidate-pair') {
+        candidatePairs.push(report);
+      } else if (report.type === 'local-candidate') {
+        localCandidates.push(report);
+      } else if (report.type === 'remote-candidate') {
+        remoteCandidates.push(report);
       }
-      if (waitingPairs.length > 0) {
-        console.log(`${langContext} [ATTENDEE-ICE] ⏳ ${waitingPairs.length} waiting candidate pairs:`, waitingPairs.slice(0, 3));
-      }
-      if (inProgressPairs.length > 0) {
-        console.log(`${langContext} [ATTENDEE-ICE] 🔄 ${inProgressPairs.length} in-progress candidate pairs:`, inProgressPairs.slice(0, 3));
-      }
-      if (succeededPairs.length > 0) {
-        console.log(`${langContext} [ATTENDEE-ICE] ✅ ${succeededPairs.length} succeeded candidate pairs:`, succeededPairs);
-      }
-
-      // Check for issues
-      if (localCandidates.length === 0) {
-        console.error(`${langContext} [ATTENDEE-ICE] ❌ No local candidates generated by attendee!`);
-      }
-      if (remoteCandidates.length === 0) {
-        console.error(`${langContext} [ATTENDEE-ICE] ❌ No remote candidates received from guide!`);
-      }
-      if (candidatePairs.length === 0) {
-        console.error(`${langContext} [ATTENDEE-ICE] ❌ No candidate pairs formed!`);
-      }
-
-      // Diagnose why connection might be stuck
-      if (succeededPairs.length === 0 && failedPairs.length > 0) {
-        console.error(`${langContext} [ATTENDEE-ICE] 🚨 ISSUE: All candidate pairs failed - likely network connectivity problem`);
-      } else if (succeededPairs.length === 0 && inProgressPairs.length > 0) {
-        console.warn(`${langContext} [ATTENDEE-ICE] ⏳ WAITING: Candidate pairs still being tested - this is normal`);
-      } else if (succeededPairs.length > 0) {
-        console.log(`${langContext} [ATTENDEE-ICE] ✅ GOOD: ${succeededPairs.length} successful pairs found`);
-      }
-
-      // Log connection state
-      console.log(`${langContext} [ATTENDEE-ICE] Connection state: ${pc.connectionState}`);
-      console.log(`${langContext} [ATTENDEE-ICE] ICE connection state: ${pc.iceConnectionState}`);
-      console.log(`${langContext} [ATTENDEE-ICE] ICE gathering state: ${pc.iceGatheringState}`);
-    }).catch(error => {
-      console.error(`${langContext} [ATTENDEE-ICE] Error analyzing ICE candidates:`, error);
     });
+    
+    const inProgress = candidatePairs.filter(p => p.state === 'in-progress').length;
+    const waiting = candidatePairs.filter(p => p.state === 'waiting').length;
+    const succeeded = candidatePairs.filter(p => p.state === 'succeeded').length;
+    
+    console.log(`${langContext} 📊 ICE PROGRESS: ${inProgress} in-progress, ${waiting} waiting, ${succeeded} succeeded`);
+    
+    // CRITICAL FIX: Detect ICE role deadlock (many waiting pairs, no in-progress)
+    if (waiting > 20 && inProgress === 0 && succeeded === 0) {
+      console.error(`${langContext} 🚨 ICE ROLE DEADLOCK DETECTED: ${waiting} pairs waiting, no checks initiated!`);
+      
+      // Trigger ICE restart with role reassignment
+      resolveICERoleDeadlock(pc, language);
+    }
+  });
+}
+
+// New function to resolve ICE role deadlock
+async function resolveICERoleDeadlock(pc: RTCPeerConnection, language: string) {
+  const langContext = `[${language}]`;
+  console.log(`${langContext} 🔄 Resolving ICE role deadlock...`);
+  
+  try {
+    // Standard ICE restart without manual role manipulation
+    // Let WebRTC handle the role assignment naturally
+    console.log(`${langContext} 🔄 Triggering standard ICE restart...`);
+    
+    // For attendee (answerer): restartIce() will maintain controlled role
+    // For guide (offerer): restartIce() will maintain controlling role  
+    pc.restartIce();
+    
+    console.log(`${langContext} ✅ ICE restart initiated - roles will be assigned automatically`);
   } catch (error) {
-    console.error(`${langContext} [ATTENDEE-ICE] Error in analyzeICECandidates:`, error);
+    console.error(`${langContext} ❌ ICE restart failed:`, error);
+    
+    // Fallback: attempt full reconnection
+    console.log(`${langContext} 🔄 Attempting fallback reconnection...`);
+    reconnect(language);
   }
 }
 

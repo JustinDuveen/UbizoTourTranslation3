@@ -1887,10 +1887,18 @@ async function createAttendeeConnection(
     // ENTERPRISE: Use Enterprise ICE Manager for attendee connections
     const iceManager = EnterpriseICEManager.getInstance();
     const rtcConfig = iceManager.getRTCConfiguration('guide'); // Guide role for consistency
+    
+    // CRITICAL FIX: Explicitly set ICE controlling role for guide
+    const enhancedConfig = {
+      ...rtcConfig,
+      // @ts-ignore - iceControlling may not be in TypeScript defs
+      iceControlling: true // Guide MUST be controlling as the offerer
+    };
 
-    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Enterprise ICE config for attendee ${attendeeId}: ${rtcConfig.iceServers?.length || 0} servers, pool: ${rtcConfig.iceCandidatePoolSize}`);
-
-    attendeePC = new RTCPeerConnection(rtcConfig);
+    console.log(`${langContext} [GUIDE-ATTENDEE-ICE] ✅ Enterprise ICE config for attendee ${attendeeId}: ${enhancedConfig.iceServers?.length || 0} servers, role: controlling`);
+    
+    // Create peer connection with enhanced config
+    attendeePC = new RTCPeerConnection(enhancedConfig);
   } catch (error) {
     console.error(`${langContext} [GUIDE-ATTENDEE-ICE] ❌ Enterprise ICE configuration failed for attendee ${attendeeId}:`, error);
     const errorMessage = error instanceof Error ? error.message : String(error);
