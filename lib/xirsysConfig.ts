@@ -35,9 +35,11 @@ export function getStaticXirsysICEServers(): RTCIceServer[] {
       credential: "f1bd2cfa-5064-11f0-8329-0242ac120004",
       urls: [
         "turn:jb-turn1.xirsys.com:80?transport=udp",
-        "turn:jb-turn1.xirsys.com:3478?transport=udp", 
+        "turn:jb-turn1.xirsys.com:3478?transport=udp",
         "turn:jb-turn1.xirsys.com:80?transport=tcp",
-        "turn:jb-turn1.xirsys.com:3478?transport=tcp"
+        "turn:jb-turn1.xirsys.com:3478?transport=tcp",
+        "turns:jb-turn1.xirsys.com:443?transport=tcp",
+        "turns:jb-turn1.xirsys.com:5349?transport=tcp"
       ]
     }
   ];
