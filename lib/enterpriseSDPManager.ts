@@ -49,8 +49,9 @@ export class EnterpriseSDPManager {
     config: Partial<SDPOptimizationConfig> = {}
   ): Promise<RTCSessionDescriptionInit> {
     const offer = await pc.createOffer({
-      // Modern WebRTC - no deprecated constraints
-      iceRestart: false
+      // ICE controlling role for guide (initiates connectivity checks)
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: false
     });
 
     const optimizedOffer = this.optimizeSDPForEnterprise(offer, config);
@@ -72,7 +73,11 @@ export class EnterpriseSDPManager {
     pc: RTCPeerConnection,
     config: Partial<SDPOptimizationConfig> = {}
   ): Promise<RTCSessionDescriptionInit> {
-    const answer = await pc.createAnswer();
+    const answer = await pc.createAnswer({
+      // ICE controlled role for attendee (responds to connectivity checks)
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: false
+    });
     
     const optimizedAnswer = this.optimizeSDPForEnterprise(answer, config);
     
