@@ -1018,17 +1018,28 @@ function setupMediaHandlers(
         }
       };
 
-      // Try immediate playback first
-      const immediateSuccess = await attemptAudioPlayback(false);
+      // CRITICAL iPhone Chrome Fix: Force user interaction immediately for iOS Chrome
+      const isIOSChrome = isIOS && navigator.userAgent.includes('CriOS');
       
-      if (!immediateSuccess) {
-        console.warn(`${langContext} ❌ Autoplay blocked, creating expert user interaction handler...`);
+      if (isIOSChrome) {
+        console.log(`${langContext} 🍎 iPhone Chrome detected - forcing user interaction for audio unlock`);
+        // Skip autoplay attempt for iPhone Chrome, go straight to user interaction
+        console.warn(`${langContext} 📱 iPhone Chrome requires user interaction - creating audio unlock handler...`);
+      } else {
+        // Try immediate playback first for other browsers
+        const immediateSuccess = await attemptAudioPlayback(false);
         
-        // EXPERT FIX 7: Enhanced user interaction handler
-        const createUserInteractionHandler = () => {
-          // Remove any existing overlays first
-          const existingOverlays = document.querySelectorAll('[data-audio-overlay]');
-          existingOverlays.forEach(overlay => overlay.remove());
+        if (immediateSuccess) {
+          return; // Success, no need for user interaction
+        }
+        console.warn(`${langContext} ❌ Autoplay blocked, creating expert user interaction handler...`);
+      }
+      
+      // EXPERT FIX 7: Enhanced user interaction handler
+      const createUserInteractionHandler = () => {
+        // Remove any existing overlays first
+        const existingOverlays = document.querySelectorAll('[data-audio-overlay]');
+        existingOverlays.forEach(overlay => overlay.remove());
           
           const playButton = document.createElement('button');
           playButton.textContent = isIOS ? '🔊 Tap to Enable Audio (iOS)' : 
@@ -1085,13 +1096,29 @@ function setupMediaHandlers(
           overlay.appendChild(playButton);
           document.body.appendChild(overlay);
           
-          // Enhanced click handler
+          // Enhanced click handler with iPhone Chrome specific fixes
           playButton.onclick = async () => {
             try {
               console.log(`${langContext} 🎵 User interaction received, attempting audio start...`);
               
               playButton.textContent = '🔄 Starting Audio...';
               playButton.style.background = '#2196F3';
+              
+              // CRITICAL iPhone Chrome Fix: Ensure AudioContext is created and resumed in user gesture
+              if (isIOSChrome && !globalAudioContext) {
+                try {
+                  globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                  console.log(`${langContext} 🍎 Created AudioContext for iPhone Chrome: ${globalAudioContext.state}`);
+                } catch (error) {
+                  console.error(`${langContext} Failed to create AudioContext:`, error);
+                }
+              }
+              
+              // Force AudioContext resume with user gesture for iPhone Chrome
+              if (isIOSChrome && globalAudioContext && globalAudioContext.state !== 'running') {
+                await globalAudioContext.resume();
+                console.log(`${langContext} 🍎 AudioContext forced resume for iPhone Chrome: ${globalAudioContext.state}`);
+              }
               
               const success = await attemptAudioPlayback(true);
               
@@ -1155,8 +1182,7 @@ function setupMediaHandlers(
           };
         };
         
-        createUserInteractionHandler();
-      }
+      createUserInteractionHandler();
       
       // EXPERT FIX 8: Comprehensive audio event monitoring
       const setupAudioEventListeners = () => {
@@ -1268,7 +1294,7 @@ function setupMediaHandlers(
         console.log(`${langContext} ✅ Audio track unmuted`);
       });
     }
-  };
+  }; // End of ontrack handler
 
   // Handle data channel messages (simplified)
   pc.ondatachannel = (event) => {
@@ -1284,7 +1310,7 @@ function setupMediaHandlers(
       }
     };
   };
-}
+} // End of setupMediaHandlers function
 
 async function completeSignaling(pc: RTCPeerConnection, language: string, tourId: string, offerData: any, attendeeName: string, existingAttendeeId?: string, signalingClient?: any): Promise<{ attendeeId: string }> {
   const langContext = `[${language}]`;

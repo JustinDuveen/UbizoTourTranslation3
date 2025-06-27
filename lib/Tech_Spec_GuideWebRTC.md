@@ -1,432 +1,323 @@
-Technical Specification: GuideWebRTC Module
-Version: 1.2 (Reflecting code alignment for session.update, Redis interaction, and TURNS status)
-Date: 2024-07-27
-Author: AI Language Model (Based on provided code)
+Of course. Here is a comprehensive technical specification for the GuideWebRTC.ts file.
 
+Technical Specification: GuideWebRTC.ts
 1. Overview
 
-GuideWebRTC.ts is a client-side TypeScript module responsible for managing WebRTC connections on the "guide" side of a real-time tour translation application. Its primary functions are:
+GuideWebRTC.ts is a client-side module responsible for managing all WebRTC-related functionalities for the "guide" user in a real-time, multi-language tour translation application. Its primary purpose is to capture the guide's microphone audio, send it to the OpenAI Realtime API for translation, receive the translated audio, and then broadcast that translated audio and text to all connected "attendee" clients for a specific language.
 
-Establishing and maintaining a bidirectional WebRTC connection with OpenAI's Realtime API for each required translation language.
+The module implements a two-hop WebRTC architecture:
 
-Capturing the guide's microphone audio and optional pre-recorded instructions.
+Hop 1 (Guide <-> OpenAI): A primary WebRTC connection is established between the guide's browser and the OpenAI API. The guide sends their microphone audio, and OpenAI sends back translated audio on a separate track.
 
-Sending the guide's audio stream to OpenAI for transcription and translation.
+Hop 2 (Guide <-> Attendees): For each attendee, a separate WebRTC connection is established. The guide's browser acts as a forwarder, taking the translated audio stream received from OpenAI and sending it to the attendee.
 
-Receiving translated audio and text streams from OpenAI.
+This architecture allows a single guide to support multiple translation languages simultaneously, as each language is managed as an independent Guide <-> OpenAI session.
 
-Verifying the integrity and readiness of incoming audio streams from OpenAI.
+2. Core Components & State Management
 
-Managing connections with multiple "attendee" clients for each language.
+The module's state is managed through a set of key data structures and helper classes.
 
-Forwarding the verified translated audio and text received from OpenAI to the appropriate attendee clients.
+openAIConnectionsByLanguage (Map<string, OpenAIConnection>):
 
-Handling connection lifecycle events, errors, key renewals, and reconnections gracefully.
+Purpose: The central registry for the primary connection to the OpenAI API for each language.
 
-2. Core Concepts
+Key: string (normalized language, e.g., "spanish").
 
-Language Group: The system manages resources independently for each target translation language (e.g., 'french', 'german').
+Value: OpenAIConnection object, which contains the RTCPeerConnection (pc), RTCDataChannel (dc), audio stream from OpenAI (audioStream), and other related resources for that language.
 
-OpenAI Connection (OpenAIConnection): Represents the WebRTC connection to OpenAI for a specific language. Contains an RTCPeerConnection (pc) and an RTCDataChannel (dc) for events/text.
+attendeeConnectionsByLanguage (Map<string, Map<string, AttendeeConnection>>):
 
-Attendee Connection (AttendeeConnection): Represents the WebRTC connection to a single attendee client for a specific language. Contains an RTCPeerConnection (pc) and an RTCDataChannel (dc) for receiving forwarded translations.
+Purpose: A nested map that tracks all connected attendees, organized by language.
 
-Ephemeral Key: A short-lived API key (client_secret) fetched from a backend (/api/session) required to authenticate with the OpenAI Realtime API. Must be renewed periodically (typically every minute).
+Outer Key: string (normalized language).
 
-SDP (Session Description Protocol): Used to negotiate capabilities and connection details between peers (Guide <-> OpenAI, Guide <-> Attendee). The module specifically modifies the SDP offer to OpenAI to ensure bidirectional audio (a=sendrecv).
+Inner Key: string (unique attendeeId).
 
-ICE (Interactive Connectivity Establishment): Framework using STUN and TURN servers to establish direct or relayed peer-to-peer connections through NATs and firewalls.
+Value: AttendeeConnection object, containing the RTCPeerConnection and RTCDataChannel specific to that attendee.
 
-Audio Verification: A mandatory step performed on incoming audio streams from OpenAI to ensure they are stable and ready for playback/forwarding before use.
+AudioMonitor (Class):
 
-3. Key Features & Functionality
+A utility class that uses the Web Audio API (AnalyserNode) to monitor the guide's microphone stream for audio activity.
 
-Multi-Language Support: Manages independent OpenAI and attendee connections for multiple target languages simultaneously.
+It detects periods of silence and speech resumption, which are used to trigger re-sending of translation instructions to OpenAI, ensuring the session remains correctly configured.
 
-OpenAI WebRTC Integration:
+It also handles a periodic refresh of instructions to maintain session integrity over long durations.
 
-Establishes WebRTC connection using OpenAI's /v1/realtime endpoint.
+StatsCollector (Class):
 
-Handles authentication using ephemeral keys.
+A diagnostic utility to collect WebRTC statistics (pc.getStats()) like Round-Trip Time (RTT), packet loss, and jitter. Used for monitoring connection health.
 
-Sends SDP Offer, specifically modified for a=sendrecv.
+AnswerDeduplicationManager (Class):
 
-Receives and processes SDP Answer from OpenAI.
+A singleton manager to prevent processing the same attendee connection request (answer) multiple times. This is critical in a system with dual signaling (WebSocket + HTTP Polling), where the same message could arrive through both channels.
 
-Uses a dedicated RTCDataChannel (oai-events) for control messages and text exchange with OpenAI.
+Enterprise Modules (enterpriseConnectionManager, EnterpriseICEManager, EnterpriseSDPManager):
 
-Handles various OpenAI events (session.*, response.*, input_audio_buffer.*, output_audio_buffer.*, error).
+These modules abstract away complex or provider-specific configurations.
 
-Audio Input:
+EnterpriseICEManager: Provides centralized, reliable RTC configuration, likely pre-configured with Xirsys STUN/TURN servers for robust NAT traversal.
 
-Accesses the guide's microphone using getUserMedia.
+EnterpriseSDPManager: Creates optimized Session Description Protocol (SDP) offers, potentially with specific codecs or settings tailored for the platform.
 
-Optionally loads pre-recorded audio instructions (e.g., .mp3) and prepends them to the audio stream sent to OpenAI.
+3. Process Flow & Lifecycle
 
-Audio Output Verification (verifyOpenAIAudio):
+The module operates through a well-defined lifecycle of initialization, connection management, and cleanup.
 
-Intercepts incoming audio tracks from OpenAI via the ontrack event.
+Trigger: The UI calls initGuideWebRTC when a guide starts a translation stream for a specific language.
 
-Waits a brief period (350ms) for stream stabilization as recommended by OpenAI.
+Normalization: The provided language string is normalized (e.g., to lowercase) for consistent map keying.
 
-Checks readyState, enabled, and muted status of audio tracks.
+Cleanup: Any existing connection for that language is torn down by calling cleanupGuideWebRTC to ensure a clean state.
 
-Validates that at least one audio track is live and considered active (enabled, not muted).
+Signaling: initializeSignaling is called to establish a WebSocket connection to the signaling server. The WebSocket is used for real-time exchange of SDP and ICE candidates with attendees. The module is designed to be resilient and will proceed even if WebSocket initialization fails, but with a critical warning as the HTTP polling fallback is disabled.
 
-Logs detailed success or failure information.
+OpenAI Connection: The core logic is delegated to setupOpenAIConnection.
 
-Triggers reconnection if a track ends prematurely (readyState === 'ended').
+This function establishes the first hop of the audio pipeline (Guide -> OpenAI).
 
-Prevents processing of invalid or unstable audio streams.
+Authentication: Fetches a short-lived EPHEMERAL_KEY from /api/session to authenticate with the OpenAI API.
 
-Attendee Connection Management:
+Peer Connection Creation:
 
-Generates an SDP Offer for potential attendees for each language (createAttendeeOffer) and stores it via a backend API (/api/tour/offer).
+An RTCPeerConnection (openaiPC) is created using a configuration from EnterpriseICEManager.
 
-Polls a backend API (/api/tour/answer) for SDP Answers submitted by attendees.
+A data channel (openaiDC) is created for receiving text translations and session events from OpenAI.
 
-Establishes individual RTCPeerConnections with attendees upon receiving their answer.
+Microphone Access:
 
-Handles ICE candidate exchange between the guide and attendees via backend APIs (/api/tour/ice-candidate, /api/tour/attendee-ice).
+The module checks if a microphone stream is already active from another language session. If so, it reuses the existing tracks to avoid multiple permission prompts and ensure consistent mute/unmute behavior.
 
-Manages data channels (translations) for sending data to attendees.
+If not, it calls navigator.mediaDevices.getUserMedia to acquire the guide's microphone audio.
 
-Data Forwarding:
+The microphone tracks are added to openaiPC via pc.addTrack().
 
-Forwards verified audio tracks received from OpenAI to all connected attendees of the corresponding language using RTCPeerConnection.addTrack.
+Offer/Answer Exchange with OpenAI:
 
-Forwards text deltas (response.text.delta) and other relevant events received from OpenAI's data channel to attendees via their respective data channels.
+An SDP offer is generated using EnterpriseSDPManager.createOptimizedOffer.
 
-Local Playback: Plays the verified translated audio locally for the guide using an <audio> element (playAudioForGuide) only if no attendees are connected for that language.
+SDP Modification: The SDP is programmatically modified to:
 
-Ephemeral Key Management: Automatically fetches and renews OpenAI ephemeral keys before they expire, handling retries on failure. Schedules renewal proactively.
+Set the direction to a=sendrecv (the guide sends audio and receives translated audio).
 
-Error Handling & Recovery:
+Prioritize the Opus codec for high-quality audio.
 
-Monitors iceConnectionState and connectionState for both OpenAI and attendee connections.
+The local description is set on openaiPC (setLocalDescription).
 
-Implements an automatic reconnect mechanism with exponential backoff for failed or disconnected OpenAI connections.
+After ICE gathering is complete, the SDP offer is sent to the OpenAI Realtime API (POST https://api.openai.com/v1/realtime).
 
-Includes try...catch blocks around critical operations (API calls, SDP handling, media access).
+OpenAI responds with an SDP answer, which is set as the remote description on openaiPC (setRemoteDescription).
 
-Cleans up individual attendee connections on failure (cleanupAttendeeConnection).
+Storing the Offer for Attendees: The guide's SDP offer is sent to the application's backend (POST /api/tour/offer) and stored in Redis. This allows attendees to retrieve the offer when they join the tour.
 
-Lifecycle Management:
+Event Handlers:
 
-Provides initGuideWebRTC to initialize connections for a specific language.
+openaiDC.onopen: When the data channel opens, sendTranslationInstructions is called to send a system prompt to OpenAI, instructing it on how to perform the translation.
 
-Provides cleanupGuideWebRTC and cleanupGuideWebRTCForLanguage to properly close all connections, clear timers, and remove resources.
+openaiDC.onmessage: Handles incoming messages from OpenAI, such as text translation deltas (response.text.delta) and session status updates.
 
-4. Workflow & Lifecycle
+openaiPC.ontrack: This is a critical step. When OpenAI begins sending the translated audio, this event fires. The handler captures the incoming MediaStream, stores it in the corresponding OpenAIConnection object (connection.audioStream), and immediately calls forwardAudioToAttendees to ensure any already-connected attendees start receiving the audio.
 
-Initialization (initGuideWebRTC(language, ...)):
+This flow begins when an attendee joins the tour and their SDP answer is received by the guide's client via the signaling layer (WebSocket or HTTP polling).
 
-Check if connection for language already exists; if so, exit.
+Trigger: The signaling layer receives an answer and calls processAttendeeAnswer.
 
-Fetch initial Ephemeral Key from /api/session.
+Deduplication: The AnswerDeduplicationManager checks if this attendee's answer has already been processed. If so, it's ignored.
 
-Schedule first key renewal (scheduleKeyRenewal).
+Peer Connection Creation: A new, separate RTCPeerConnection (attendeePC) is created for this specific attendee.
 
-Setup OpenAI Connection (setupOpenAIConnection):
+Audio Forwarding:
 
-Create openaiPC and openaiDC.
+The module retrieves the audioStream received from OpenAI (which was stored in Step 2.6).
 
-Get microphone stream (getUserMedia).
+The audio tracks from this stream are added to attendeePC using pc.addTrack(). This effectively pipes the translated audio from the OpenAI connection to the attendee connection.
 
-Load/process audio instructions.
+If the audioStream is not yet available (a race condition where the attendee connects before OpenAI sends audio), a retry mechanism with a timeout is initiated.
 
-Add audio tracks to openaiPC.
+Offer/Answer Exchange with Attendee:
 
-Set up openaiPC and openaiDC event handlers (state changes, messages, errors).
+The guide's role is technically the "offerer" in this leg. However, since the attendee has already provided an answer to the guide's pre-stored offer, the guide sets the attendee's answer as the remote description (setRemoteDescription).
 
-Create SDP Offer, modify it to ensure a=sendrecv.
+The guide then creates its own local description (which acts as the "answer" to the attendee's "offer" in this context, completing the handshake) and sets it.
 
-Set Local Description.
+ICE Candidate Exchange:
 
-Wait for ICE gathering completion.
+attendeePC.onicecandidate is configured to send any generated ICE candidates to the specific attendee via the signaling layer (sendIceCandidateToAttendee).
 
-Send Offer SDP to OpenAI Realtime API (/v1/realtime) with auth header.
+The guide's client also polls (pollForAttendeeIceCandidates) for the attendee's ICE candidates (or receives them via WebSocket) and adds them to attendeePC via pc.addIceCandidate().
 
-Receive Answer SDP from OpenAI.
+toggleMicrophoneMute(mute: boolean): This function iterates through all active openAIConnectionsByLanguage and toggles the enabled property of the microphone's MediaStreamTrack. This effectively mutes/unmutes the audio being sent to OpenAI for all languages at once.
 
-Set Remote Description. Connection conceptually established.
+cleanupGuideWebRTC(language?: string):
 
-The openaiPC.ontrack handler is now active, waiting for incoming tracks.
+If a language is provided, it tears down the connections only for that language. If not, it cleans up everything.
 
-Store the successful OpenAIConnection.
+It stops the AudioMonitor and any polling intervals.
 
-Prepare for Attendees (createAttendeeOffer):
+It closes all related RTCPeerConnections and RTCDataChannels (for both OpenAI and all attendees of that language).
 
-Generate an SDP Offer suitable for attendees (e.g., recvonly audio).
+It stops the microphone tracks only if they are not being used by another active language session.
 
-Store this offer via the backend API (/api/tour/offer).
+It removes the connections from the central state maps.
 
-Start Attendee Polling:
+cleanupLanguageSession(language: string): A specific cleanup helper that removes the language entry from the AnswerDeduplicationManager to prevent memory leaks when a session ends.
 
-Initiate polling (pollForAttendeeAnswers) via setInterval to check /api/tour/answer for attendee responses.
+4. Public API Reference
 
-OpenAI ontrack Event:
-
-Triggered when OpenAI starts sending an audio (or video) track.
-
-If track.kind === 'audio':
-
-Call verifyOpenAIAudio(stream, language).
-
-If Verification Fails: Log error. If readyState === 'ended', trigger reconnect. Stop processing this track.
-
-If Verification Passes:
-
-Check attendeeConnectionsByLanguage.
-
-If attendees exist: Iterate and call attendeePC.addTrack(verifiedTrack, verifiedStream) for each attendee.
-
-If no attendees: Call playAudioForGuide(verifiedStream, language).
-
-OpenAI Data Channel (onmessage):
-
-Receives JSON events from OpenAI.
-
-handleOpenAIMessage parses the event.
-
-Handles response.text.delta (updates guide UI, forwards to attendees via forwardTranslationToAttendees).
-
-Handles lifecycle/status events (logs, may forward simple status like speech_started to attendees).
-
-Handles error events.
-
-Attendee Answer Polling (pollForAttendeeAnswers):
-
-Periodically fetches /api/tour/answer.
-
-For each new answer:
-
-Check if attendee ID is already connected; if so, skip.
-
-Create a new attendeePC and AttendeeConnection structure.
-
-Set up event handlers for this attendeePC (ICE, state changes, ondatachannel).
-
-Add to tracking maps (attendeeConnectionsByLanguage, allAttendees). Update UI list.
-
-Set Remote Description using the attendee's Answer SDP.
-
-Forward any existing audio tracks from the openaiPC to this new attendeePC.
-
-Start polling specifically for this attendee's ICE candidates (pollForAttendeeIceCandidates).
-
-Attendee ICE Polling (pollForAttendeeIceCandidates):
-
-Periodically fetches /api/tour/attendee-ice for a specific attendee.
-
-Adds received candidates to the corresponding attendeePC using addIceCandidate.
-
-Stops polling if the attendee connection fails or closes.
-
-Key Renewal (renewEphemeralKey):
-
-Triggered by scheduleKeyRenewal timer shortly before expiry.
-
-Fetches a new key from /api/session.
-
-Updates the EPHEMERAL_KEY variable.
-
-## WebRTC Signaling Fixes (Expert-Level Implementation)
-
-### Critical Signaling Order Enforcement
-
-The implementation now strictly follows RFC 3264 WebRTC signaling specification:
-
-1. **Proper Remote Description Timing**: Remote description (SDP answer) MUST be set before any ICE candidate processing
-2. **ICE Candidate Polling Delay**: `pollForAttendeeIceCandidates()` only starts AFTER `setRemoteDescription()` succeeds
-3. **State Validation**: All ICE operations check for `pc.remoteDescription` existence before proceeding
-
-### SDP M-Line Validation & Auto-Fix
-
-Implemented comprehensive SDP validation system:
-
-1. **M-Line Extraction**: `extractMLines()` parses SDP to identify media types in order
-2. **Order Validation**: `validateMLineOrder()` compares offer vs answer m-line ordering
-3. **Automatic Repair**: `fixMLineOrder()` reorders answer SDP to match offer when mismatches detected
-4. **Detailed Logging**: Shows exactly what SDP issues are found and how they're resolved
-
-### Enhanced Error Recovery
-
-1. **Duplicate Handler Removal**: Eliminated duplicate event handlers that could cause conflicts
-2. **Connection State Monitoring**: Enhanced state checking before WebRTC operations
-3. **Graceful Fallbacks**: Auto-repair mechanisms for common signaling violations
-4. **Comprehensive Diagnostics**: Detailed logging shows exactly where signaling succeeds/fails
-
-### Implementation Details
-
-**Fixed Signaling Flow:**
-```
-Guide: createOffer() → setLocalDescription(offer) → store offer in Redis
-Attendee: fetch offer → setRemoteDescription(offer) → createAnswer() → setLocalDescription(answer) → send answer
-Guide: receive answer → validate SDP m-lines → fix if needed → setRemoteDescription(answer) → START ICE polling
-```
-
-**Key Functions Added:**
-- `extractMLines(sdp: string): string[]` - Extracts media types from SDP
-- `validateMLineOrder(offerMLines: string[], answerMLines: string[]): boolean` - Validates m-line consistency
-- `fixMLineOrder(answerSdp: string, offerMLines: string[]): string` - Auto-fixes SDP ordering issues
-
-**Error Prevention:**
-- Remote description validation before ICE candidate processing
-- SDP m-line ordering validation and auto-correction
-- Duplicate event handler elimination
-- Enhanced connection state monitoring
-
-### Key Renewal Integration
-
-Schedules the next renewal.
-
-Crucially, if an OpenAIConnection exists, the current implementation re-initializes the entire connection for that language by calling initGuideWebRTC again after closing the old one. This ensures the new key is used for any subsequent API interactions (like potential re-negotiations, though the primary use is the initial SDP exchange).
-
-Disconnection/Failure:
-
-iceConnectionState or connectionState changes trigger logging.
-
-failed or disconnected states on openaiPC trigger the reconnect function.
-
-failed or closed states on attendeePC trigger cleanupAttendeeConnection.
-
-reconnect calls cleanupGuideWebRTCForLanguage, waits with backoff, then calls initGuideWebRTC.
-
-Cleanup (cleanupGuideWebRTC, cleanupGuideWebRTCForLanguage):
-
-Called manually (e.g., on component unmount) or during reconnection.
-
-Clears all intervals and timeouts (connectionIntervals, renewalTimers).
-
-Closes all RTCPeerConnections and RTCDataChannels for the specified language(s).
-
-Removes guide audio elements.
-
-Clears tracking maps.
-
-5. OpenAI Integration Details
-
-API Endpoint: https://api.openai.com/v1/realtime
-
-Authentication: Authorization: Bearer <EPHEMERAL_KEY> header. Requires fetching key from /api/session.
-
-Request: POST request with Content-Type: application/sdp and the Guide's SDP Offer in the body. Query parameters model and voice are used.
-
-SDP Offer Requirements: Must signal capability to send and receive audio (a=sendrecv). The module explicitly modifies the SDP to ensure this.
-
-SDP Answer: OpenAI responds with its SDP Answer, also application/sdp.
-
-Data Channel (oai-events): Used for JSON-based event communication. Key events handled:
-
-session.update: In the provided code, this message type (specifically {"type": "session.update", "session": { "state": "closing" }}) is sent via the sendClosingMessage helper function before intentionally closing the OpenAI connection, acting as a graceful shutdown notification rather than initial configuration.
-
-response.text.delta: Received from OpenAI with partial text translations.
-
-response.audio.delta: Received but ignored (audio handled via ontrack).
-
-response.done: Indicates OpenAI has finished processing a response segment.
-
-input_audio_buffer.*, output_audio_buffer.*: Lifecycle events indicating speech detection and audio playback states on OpenAI's side.
-
-error: Indicates an error occurred on OpenAI's server.
-
-Audio Track (ontrack): The primary way translated audio is received. Requires the verification step (verifyOpenAIAudio).
-
-6. Audio Verification System (verifyOpenAIAudio)
-
-Purpose: To address potential instability or delays in the audio stream provided by OpenAI's WebRTC endpoint. Ensures the stream is usable before forwarding or playback.
-
-Trigger: Called inside the openaiPC.ontrack handler for incoming audio tracks.
-
-Mechanism:
-
-Waits 350ms (setTimeout).
-
-Gets all audio tracks from the received MediaStream.
-
-Checks track.readyState: Must be 'live'.
-
-Checks track.enabled and !track.muted: Used to infer an 'active' processing state.
-
-Validation Rule: At least one audio track must satisfy readyState === 'live' AND processingState === 'active'.
-
-Outcome: Returns { isValid: boolean, details: OpenAITrackDetails[] }.
-
-Recovery: If isValid is false and any track readyState is 'ended', it triggers the reconnect process for the language.
-
-7. Attendee Connection Handling
-
-Signaling: Relies entirely on backend APIs for signaling:
-
-/api/tour/offer: Guide POSTs offer for attendees.
-
-/api/tour/answer: Guide GETs answers from attendees.
-
-/api/tour/ice-candidate: Guide POSTs its candidates for a specific attendee.
-
-/api/tour/attendee-ice: Guide GETs candidates from a specific attendee.
-
-Connection: An RTCPeerConnection is created for each attendee only after their answer is received via polling.
-
-Data Flow: Primarily unidirectional (Guide -> Attendee). The guide forwards verified OpenAI audio tracks via addTrack and text/events via the translations data channel.
-
-8. Error Handling & Recovery Summary
-
-Connection States: oniceconnectionstatechange and onconnectionstatechange listeners monitor PC states.
-
-OpenAI Reconnect: reconnect function handles OpenAI connection loss with cleanup, backoff, and re-initialization.
-
-Attendee Cleanup: cleanupAttendeeConnection handles individual attendee connection failures.
-
-Key Renewal: Retries with exponential backoff on failure. If max retries are reached, logs an error; connection may subsequently fail.
-
-API Errors: fetch calls include .ok checks and log errors. Polling handles 404s gracefully.
-
-Audio Verification Failure: Specific handling for premature ended tracks triggers reconnection.
-
-9. Helper Functions
-
-arrayBufferToBase64 / base64ToArrayBuffer: Data format conversion.
-
-createTransferableMessage / sendThroughDataChannel: Consistent message creation and sending via Data Channels, including size checks and binary handling.
-
-playAudioForGuide: Manages local audio playback elements.
-
-updateAttendeesList: Updates UI state.
-
-loadAudioInstructions: Fetches and processes instruction audio.
-
-store*InRedis (e.g., storeLanguageMapInRedis, storeTranslationInRedis): Functions that make API calls to the backend service (e.g., /api/tour/languages, /api/tour/answer). The backend service invoked by these APIs is responsible for the actual interaction with Redis persistence. The client code does not interact with Redis directly.
-
-forward*ToAttendees: Logic for sending data to attendee groups.
-
-poll*: Specific polling functions for answers and ICE candidates.
-
-cleanup*: Resource cleanup functions.
-
-sendClosingMessage: Attempts graceful shutdown notification to OpenAI using a session.update message before closing the connection.
-
-10. Configuration & Dependencies
-
-Backend API: Requires a backend implementing the specified /api/ endpoints for session management, offer/answer exchange, ICE candidate relaying, and persistence operations (like storing language maps or translations, likely using Redis).
-
-ICE Servers: Configuration exclusively uses Xirsys cloud-hosted TURN/STUN servers for optimal global connectivity. The system automatically fetches ICE server configurations from Xirsys API with fallback to public servers if needed.
-
-Audio Files: Assumes instruction audio files are available at paths like audio/english_to_<language>_Translation_Instruction.mp3.
-
-Environment: Runs in a browser environment supporting WebRTC and fetch.
-
-11. Future Considerations & Potential Improvements
-
-Codec Preferences: More explicit SDP manipulation to prefer/mandate specific codecs (e.g., Opus) if needed.
-
-Network Monitoring: Implement more detailed network statistics monitoring (e.g., using getStats()) for advanced diagnostics.
-
-UI Feedback: Provide clearer feedback to the guide about connection states, key renewal issues, verification failures, and reconnections.
-
-Scalability: For very large numbers of attendees per language, investigate backend-based media forwarding/mixing solutions instead of direct guide-to-attendee tracks.
-
-State Management: Consider integrating with a more formal state management library (like Redux, Zustand) if the application complexity grows.
-
-Key Renewal Strategy: Evaluate if re-initializing the entire connection on key renewal is always necessary or if updating the key for subsequent API calls (if any occur beyond initial setup) would suffice. Re-initialization is safer but more disruptive.
+async function initGuideWebRTC(setTranslation, language, setAttendees, tourId, tourCode): Promise<void>
+
+Initializes the entire WebRTC stack for a given language. Sets up the connection to OpenAI and prepares to accept attendee connections.
+
+function toggleMicrophoneMute(mute: boolean): void
+
+Enables or disables the guide's microphone track being sent to OpenAI across all active language connections.
+
+function cleanupGuideWebRTC(specificLanguage?: string): void
+
+Tears down and cleans up all WebRTC resources. If specificLanguage is provided, it only cleans up that session; otherwise, it cleans up all sessions.
+
+function cleanupLanguageSession(language: string): void
+
+Performs session-specific cleanup, primarily for the answer deduplication cache.
+
+function getDeduplicationStats(language: string): { processedCount: number }
+
+A debugging utility to get statistics from the answer deduplication manager.
+
+5. Detailed Data Structures
+The module's operation relies on several key interfaces that encapsulate the state for each connection.
+interface OpenAIConnection: Represents the primary connection between the guide and the OpenAI API for a single language.
+pc: RTCPeerConnection: The WebRTC peer connection object for this session.
+dc: RTCDataChannel: The data channel for text-based communication (instructions, translation text, errors).
+audioMonitor?: AudioMonitor: An instance of the AudioMonitor class, attached to the guide's microphone to detect speech and silence.
+statsCollector?: StatsCollector: An instance of the StatsCollector class for gathering connection metrics.
+audioElement?: HTMLAudioElement: A DOM element used to play back the incoming translated audio from OpenAI. While it's set to autoplay, its primary purpose in this architecture is to be the source for the audioStream.
+audioStream?: MediaStream: The most critical property. This holds the incoming audio stream from OpenAI containing the real-time translation. It is the source for all outbound attendee connections.
+microphoneTracks?: MediaStreamTrack[]: A reference to the guide's local microphone tracks. Stored for shared use across languages and for proper cleanup.
+answerPollInterval?: NodeJS.Timeout: The timer ID for the legacy HTTP polling mechanism to fetch attendee answers (used as a fallback if WebSocket fails).
+signalingClient?: any: The WebSocket client instance for real-time signaling with attendees.
+interface AttendeeConnection: Represents a connection from the guide to a single attendee.
+pc: RTCPeerConnection: The peer connection object for this specific attendee.
+dc: RTCDataChannel: The data channel used to send text translations to the attendee.
+iceMonitor?: any: An instance of the ICEMonitor to watch for connection timeouts and failures for this specific attendee link.
+interface AttendeeAnswerData: A standardized, type-safe interface for attendee answers received from the signaling layer.
+attendeeId: string: The unique identifier for the connecting attendee.
+answer: RTCSessionDescriptionInit | string: The SDP answer from the attendee, which can be a direct object or a JSON string.
+timestamp?: number: An optional timestamp for logging and debugging.
+6. Signaling Mechanism: A Hybrid Approach
+The system employs a robust, dual-channel signaling strategy to exchange SDP and ICE candidates between the guide and attendees.
+Primary Channel (WebSocket):
+Provider: webrtcSignaling.ts
+Purpose: Provides a low-latency, real-time, bi-directional communication channel. This is the preferred method for exchanging ICE candidates and answers.
+Workflow:
+Upon initialization, the guide connects to a language-specific room on the signaling server.
+The signalingClient listens for answer and ice-candidate events from attendees.
+When the guide generates an ICE candidate for an attendee, it calls signalingClient.sendIceCandidate(), which sends the candidate directly to the target attendee's WebSocket client.
+Resilience: The signaling client has a built-in retry mechanism for sending messages, but the initial connection is treated as critical.
+Fallback & Persistence Channel (Redis + HTTP API):
+Purpose: Serves as a persistent store and a reliable fallback. An attendee might connect via HTTP before their WebSocket is established, or a WebSocket message might be dropped. Storing signaling data in Redis ensures it is never lost.
+Workflow:
+Offer: The guide's initial SDP offer is always stored in Redis via POST /api/tour/offer.
+Answer: Attendees post their SDP answer to Redis. The guide's client has a legacy poller (pollForAttendeeAnswers) that periodically fetches these answers via GET /api/tour/answer. This polling is a secondary mechanism to the WebSocket listener.
+ICE Candidates:
+Guide -> Attendee: After attempting to send via WebSocket, the guide always stores its ICE candidate in Redis via POST /api/tour/ice-candidate. This guarantees delivery even if the WebSocket send fails.
+Attendee -> Guide: The guide polls for attendee candidates via GET /api/tour/attendee-ice or receives them via WebSocket. The polling is crucial for bootstrapping the connection if the attendee's WebSocket isn't ready. Polling for a specific attendee stops once their ICE connection is established.
+This hybrid model combines the speed of WebSockets with the reliability of a persistent datastore, making the connection process highly resilient to network and timing issues.
+7. Error Handling, Recovery, and Resilience
+The module is designed to be highly resilient, with several layers of error handling and automatic recovery.
+ICE Connection Failures:
+Timeout Monitoring: Each attendee connection is wrapped in an ICEMonitor. If a connection doesn't reach the connected state within a 30-second timeout, it's considered failed, logged with a detailed analysis, and cleaned up automatically.
+Automatic ICE Restarts: The createAttendeeConnection function implements a sophisticated, research-based ICE restart protocol. If an ICE connection enters a failed or disconnected state, or if an insufficient number of ICE candidates are generated, it will automatically trigger an ICE restart. This is done by creating a new offer with the iceRestart: true flag and using an exponential backoff delay to avoid overwhelming the network. This can recover connections dropped due to transient network changes (e.g., switching from Wi-Fi to cellular).
+Connection Keepalive: Once an attendee connection is established, a keepaliveInterval is started. It periodically calls getStats(), which is a lightweight operation that keeps the NAT/firewall pinhole open, preventing the connection from timing out due to inactivity on quiet networks.
+Race Conditions and Timing Issues:
+Answer Deduplication: The AnswerDeduplicationManager is a critical component that prevents race conditions between the WebSocket and HTTP polling channels. It ensures that an attendee's connection request (their SDP answer) is processed only once, even if it arrives multiple times.
+Delayed OpenAI Audio Stream: A common race condition occurs if an attendee connects before the guide has received the translated audio stream from OpenAI. The processAttendeeAnswer function handles this gracefully. If the audioStream is not yet available, it initiates a retry loop that waits for the stream to arrive before proceeding to add the audio track to the attendee's connection.
+API and Authentication Failures:
+Ephemeral Key: If the initial fetch for the OpenAI EPHEMERAL_KEY fails, the entire setupOpenAIConnection process is aborted, and an error is thrown, preventing further execution with invalid credentials.
+SDP Storage: The code includes a retry loop with exponential backoff when storing the SDP offer in Redis, handling transient backend API failures.
+8. Performance and Audio Quality Optimizations
+Several key optimizations are implemented to ensure high-quality, low-latency audio transmission while minimizing resource consumption.
+Microphone Stream Reuse: By checking for existing microphoneTracks from other language sessions, the module avoids redundant getUserMedia calls. This provides a better user experience (no multiple permission prompts) and conserves CPU/memory resources.
+Optimized Audio Constraints: When calling getUserMedia, specific constraints are requested:
+sampleRate: 16000: 16kHz is the optimal sample rate for speech-to-text engines like OpenAI's, providing sufficient quality for recognition without the overhead of higher fidelity audio.
+channelCount: 1: Mono audio is used, as stereo provides no benefit for translation and doubles the bandwidth.
+echoCancellation, noiseSuppression, autoGainControl: Standard browser features are enabled to provide a cleaner audio signal to the API, improving translation accuracy.
+SDP Manipulation for Quality:
+Codec Prioritization: The SDP offer sent to OpenAI is programmatically modified to move the Opus codec to the top of the priority list. Opus is a highly efficient, variable-bitrate codec ideal for real-time voice.
+Directionality: The SDP direction is explicitly set to a=sendrecv, which is a requirement for the Guide <-> OpenAI connection.
+Server-Side Voice Activity Detection (VAD): Instructions sent to OpenAI configure server_vad with a silence_duration_ms of 300ms. This tells the API to detect short pauses in the guide's speech and finalize the translation segment quickly, leading to a more responsive, conversational feel for the attendees.
+9. Security Considerations
+Security is a foundational aspect of the module's design.
+Encryption: All WebRTC media streams are encrypted end-to-end using DTLS-SRTP, which is a mandatory part of the WebRTC standard. Signaling communication is secured via HTTPS and WebSocket Secure (WSS).
+Authentication:
+OpenAI API: Communication is authenticated using a short-lived, single-use EPHEMERAL_KEY fetched from a secure backend endpoint.
+Internal APIs: All calls to the application's backend API (/api/tour/*) are made with credentials: 'include', ensuring they are authenticated using the guide's session cookie or JWT.
+TURN Server Security: The Xirsys TURN servers provided by the EnterpriseICEManager require time-limited credentials. This prevents unauthorized third parties from using the application's relay servers to tunnel traffic.
+Data Isolation: The use of Map data structures keyed by language and attendeeId ensures strict data sandboxing. A connection for one attendee has no access to the data or peer connection of another.
+10. Diagnostics and Maintainability
+The code is written with debugging and long-term maintenance in mind.
+Structured Logging: Nearly every significant operation logs its status to the console. All logs are prefixed with a langContext (e.g., [spanish]), making it easy to filter the console and trace the lifecycle of a single language session, even when multiple are running concurrently.
+State Change Monitoring: All iceConnectionState, connectionState, and iceGatheringState changes are logged, providing a clear audit trail for diagnosing connectivity problems.
+Dedicated Verification Function: The verifyOpenAIAudio function is a powerful diagnostic tool. It can be called to inspect the incoming stream from OpenAI, checking critical properties like readyState, enabled, and muted to quickly identify why attendees might not be hearing audio.
+Clear Modularity: The logic is broken down into well-defined functions (setupOpenAIConnection, processAttendeeAnswer, createAttendeeConnection, etc.) and helper classes (AudioMonitor, AnswerDeduplicationManager), making the codebase easier to understand, test, and refactor.
+11. External Dependencies and APIs
+The module's functionality is dependent on a set of external and internal services.
+Backend APIs:
+GET /api/session: Fetches the ephemeral key required for OpenAI API authentication.
+POST /api/tour/offer: Stores the guide's SDP offer in Redis for attendees to fetch.
+GET /api/tour/answer: Polls for attendee SDP answers stored in Redis.
+POST /api/tour/ice-candidate: Stores the guide's ICE candidates in Redis.
+GET /api/tour/attendee-ice: Polls for an attendee's ICE candidates stored in Redis.
+Signaling Server (WebSocket): A separate server (not defined in this file) that manages WebSocket connections and message relaying between clients in a room.
+External Services:
+OpenAI Realtime API: The core AI service that performs the speech-to-text and translation.
+Xirsys (or similar TURN provider): Provides the STUN and TURN servers necessary for NAT traversal, managed via the EnterpriseICEManager.
+Browser APIs:
+RTCPeerConnection, RTCDataChannel, RTCSessionDescription, RTCIceCandidate
+navigator.mediaDevices.getUserMedia
+Web Audio API (AudioContext, AnalyserNode)
+
+12. Architectural Decisions and Rationale
+The design of GuideWebRTC.ts incorporates several key architectural decisions, each with specific trade-offs. Understanding the rationale behind these choices is crucial for maintaining and evolving the system.
+Decision: Two-Hop (Guide-as-Forwarder) Architecture
+Description: The guide's browser acts as a lightweight media forwarder. It establishes one connection to receive translated audio from OpenAI and separate connections to send that audio to each attendee.
+Rationale/Pros:
+Reduced Infrastructure Complexity & Cost: This model avoids the need for a dedicated, expensive media server (like an SFU or MCU). The forwarding logic is handled entirely on the client-side, leveraging the guide's existing browser and network connection.
+Rapid Prototyping and Deployment: It simplifies the backend architecture significantly, allowing for faster development and deployment, as the only server-side components needed are for signaling and authentication.
+End-to-End Encryption (in segments): The media is encrypted on both hops (Guide <-> OpenAI and Guide <-> Attendee), maintaining a strong security posture, although the guide's client does decrypt and re-encrypt the media.
+Trade-offs/Cons:
+Scalability Bottleneck: The primary limitation is the guide's upload bandwidth. The required upload speed scales linearly with the number of attendees: Required Upload BW ≈ (BW_to_OpenAI) + (N_attendees * BW_per_attendee). This practically limits the number of attendees a single guide can support.
+Single Point of Failure: The guide's client (browser and computer) and their network connection are a single point of failure. If their browser crashes or network degrades, the stream is lost for all attendees of that language.
+Decision: Hybrid Signaling (WebSocket + Redis/HTTP Polling)
+Description: A primary, low-latency WebSocket channel is used for real-time message delivery, while a persistent Redis-backed HTTP API serves as a robust fallback and initial state store.
+Rationale:
+Reliability over Latency: For the initial connection setup (offer/answer exchange), absolute reliability is more critical than millisecond latency. Storing offers in Redis guarantees that an attendee can join even if their WebSocket connection is delayed or fails.
+Resilience to Race Conditions: This model gracefully handles scenarios where an attendee's HTTP request for an offer/candidate arrives before their WebSocket client is fully initialized and subscribed to the room.
+Decoupled Connection Flow: It allows the guide and attendee to proceed with the connection handshake asynchronously, without being strictly dependent on the WebSocket channel being live for both parties at the exact same moment.
+Decision: Client-Side SDP Manipulation
+Description: Instead of relying on the browser's default SDP generation, the code programmatically modifies the SDP to enforce specific settings.
+Rationale:
+Enforced Quality of Service: It ensures that the most optimal codec (Opus) is prioritized for the connection with OpenAI. This provides a level of control that cannot be guaranteed by default browser behavior, which may vary.
+Compatibility and Correctness: It allows for explicit setting of session attributes, such as the a=sendrecv direction, which is a strict requirement for the OpenAI Realtime API and might not be the default for a connection where only one track is initially added. This prevents common connection issues rooted in incorrect session negotiation.
+13. Known Limitations and Scaling Considerations
+While robust for its intended use case, the current architecture has inherent limitations.
+Guide's Client-Side Resource Load: The guide's browser is responsible for managing N+1 peer connections (1 for OpenAI, N for attendees) per language. This consumes significant CPU for audio encoding/decoding and memory for connection state. Supporting multiple high-attendee languages simultaneously on a mid-range machine could lead to performance degradation (e.g., UI lag, audio stutter).
+Latency Accumulation: The total latency perceived by an attendee is the sum of latencies across both hops:
+Total Latency ≈ T(guide→openai) + T(openai_processing) + T(openai→guide) + T(guide→attendee)
+While each hop is low-latency, they are additive. This makes the architecture more sensitive to network degradation on the guide's side compared to a direct-to-server model.
+Dependency on OpenAI API Performance: The quality and responsiveness of the translation are entirely dependent on the performance of the OpenAI Realtime API. Any degradation, rate limiting, or outage at the API level will directly impact the user experience, and this module has no ability to mitigate it.
+Limited Diagnostic Visibility: While client-side logging is extensive, there is no centralized, server-side visibility into the health of all active WebRTC connections. Diagnosing a widespread issue requires collecting logs from individual client machines.
+14. Role of Enterprise Abstraction Modules
+The imports from ./enterprise* files represent a key design pattern for building scalable, maintainable, enterprise-grade software.
+Purpose: To decouple the core application logic (GuideWebRTC.ts) from specific, third-party service implementations and configurations. This adheres to the Dependency Inversion Principle.
+EnterpriseICEManager:
+Role: Acts as a centralized factory or provider for RTCConfiguration objects.
+Benefits:
+Centralized Credentials: It encapsulates the logic for fetching and managing time-sensitive TURN server credentials (e.g., from a Xirsys or Twilio API call), removing this responsibility from the core WebRTC file.
+Provider Agnosticism: The application can switch its TURN provider by changing only the implementation within EnterpriseICEManager, with no changes needed in GuideWebRTC.ts.
+Configuration Optimization: It can provide different configurations based on context (e.g., a larger iceCandidatePoolSize for connections that need faster setup).
+EnterpriseSDPManager:
+Role: Encapsulates the "best practices" and business logic for creating SDP offers.
+Benefits:
+Separation of Concerns: It isolates the complex and often fragile logic of SDP manipulation (like codec prioritization) from the orchestration logic in the main file.
+Consistent Offers: Ensures that every SDP offer generated by the application adheres to a consistent, optimized standard, reducing negotiation errors.
+Testability: The logic for creating and modifying SDPs can be unit-tested in isolation.
