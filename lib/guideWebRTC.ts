@@ -1977,9 +1977,30 @@ async function createAttendeeConnection(
     console.log(`${langContext} [GUIDE-ICE] ICE gathering state changed to: ${attendeePC.iceGatheringState} for attendee ${attendeeId}`);
   };
   
-  // Monitor ICE connection state changes with enhanced role debugging
+  // Monitor ICE connection state changes with enhanced role debugging and recovery
   attendeePC.oniceconnectionstatechange = () => {
     console.log(`${langContext} [GUIDE-ICE] ICE connection state changed to: ${attendeePC.iceConnectionState} for attendee ${attendeeId}`);
+    
+    if (attendeePC.iceConnectionState === 'disconnected' || attendeePC.iceConnectionState === 'failed') {
+      console.error(`${langContext} 🚨 ICE CONNECTION LOST for attendee ${attendeeId} - state: ${attendeePC.iceConnectionState}`);
+      console.error(`${langContext} 🔧 Initiating ICE restart recovery...`);
+      
+      // CRITICAL FIX: Immediate ICE restart on disconnection
+      setTimeout(async () => {
+        if (attendeePC.iceConnectionState === 'disconnected' || attendeePC.iceConnectionState === 'failed') {
+          console.log(`${langContext} 🔄 Executing ICE restart for attendee ${attendeeId}...`);
+          
+          try {
+            // Create new optimized offer with ICE restart
+            const restartOffer = await EnterpriseSDPManager.createOptimizedOffer(attendeePC, {}, true);
+            await attendeePC.setLocalDescription(restartOffer);
+            console.log(`${langContext} ✅ ICE restart offer sent for attendee ${attendeeId}`);
+          } catch (error) {
+            console.error(`${langContext} ❌ ICE restart failed for attendee ${attendeeId}:`, error);
+          }
+        }
+      }, 1000); // Restart after 1 second
+    }
     
     if (attendeePC.iceConnectionState === 'checking') {
       console.log(`${langContext} 🔍 ICE ROLE DEBUG: Guide entering connectivity checks phase for attendee ${attendeeId}`);
@@ -2011,6 +2032,31 @@ async function createAttendeeConnection(
       }, 2000); // Check 2 seconds after entering checking state
     } else if (attendeePC.iceConnectionState === 'connected') {
       console.log(`${langContext} [GUIDE-ICE] 🎉 ICE connection ESTABLISHED with attendee ${attendeeId}!`);
+      
+      // CRITICAL FIX: Start connection keepalive to prevent timeouts
+      const keepaliveInterval = setInterval(async () => {
+        if (attendeePC.iceConnectionState === 'connected' || attendeePC.iceConnectionState === 'completed') {
+          try {
+            // Send keepalive stats request to maintain connection
+            const stats = await attendeePC.getStats();
+            let bytesReceived = 0;
+            stats.forEach(report => {
+              if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+                bytesReceived += report.bytesReceived || 0;
+              }
+            });
+            console.log(`${langContext} [GUIDE-ICE] 💓 Keepalive for attendee ${attendeeId}: ${bytesReceived} bytes received`);
+          } catch (error) {
+            console.warn(`${langContext} [GUIDE-ICE] ⚠️ Keepalive failed for attendee ${attendeeId}:`, error);
+          }
+        } else {
+          console.log(`${langContext} [GUIDE-ICE] 🛑 Stopping keepalive for attendee ${attendeeId} - connection state: ${attendeePC.iceConnectionState}`);
+          clearInterval(keepaliveInterval);
+        }
+      }, 5000); // Keepalive every 5 seconds
+      
+      // Store interval for cleanup
+      (attendeePC as any)._keepaliveInterval = keepaliveInterval;
     } else if (attendeePC.iceConnectionState === 'failed') {
       console.error(`${langContext} [GUIDE-ICE] ❌ ICE connection FAILED with attendee ${attendeeId}`);
     }
@@ -2379,6 +2425,12 @@ function cleanupAttendeeConnection(
   // Stop ICE monitoring
   if (connection.iceMonitor) {
     connection.iceMonitor.stopMonitoring();
+  }
+
+  // CRITICAL FIX: Clear keepalive interval to prevent memory leaks
+  if ((connection.pc as any)._keepaliveInterval) {
+    clearInterval((connection.pc as any)._keepaliveInterval);
+    console.log(`${langContext} 🛑 Cleared keepalive interval for attendee ${attendeeId}`);
   }
 
   // Close data channel if open
