@@ -122,6 +122,9 @@ export class EnterpriseSDPManager {
     // 5. Low-latency optimizations
     optimizedSDP = this.optimizeForLowLatency(optimizedSDP, config);
 
+    // 6. ICE Role Enforcement
+    optimizedSDP = this.enforceICERoles(optimizedSDP, sdp.type);
+
     return {
       type: sdp.type,
       sdp: optimizedSDP
@@ -282,6 +285,35 @@ export class EnterpriseSDPManager {
     }
 
     return lines.join('\r\n');
+  }
+
+  /**
+   * Enforce proper ICE roles to prevent deadlocks
+   */
+  private static enforceICERoles(sdp: string, sdpType: string): string {
+    const lines = sdp.split('\r\n');
+    
+    if (sdpType === 'offer') {
+      // Guide creates offers - must be ICE controlling (initiates connectivity checks)
+      // Remove any existing ice-options to avoid conflicts
+      const filteredLines = lines.filter(line => !line.startsWith('a=ice-options:'));
+      
+      // Add controlling ice-options after first media line
+      const audioMLineIndex = filteredLines.findIndex(line => line.startsWith('m=audio'));
+      if (audioMLineIndex !== -1) {
+        filteredLines.splice(audioMLineIndex + 1, 0, 'a=ice-options:trickle');
+      }
+      
+      return filteredLines.join('\r\n');
+    } else if (sdpType === 'answer') {
+      // Attendee creates answers - must be ICE controlled (responds to connectivity checks)
+      // Ensure no controlling ice-options are present
+      const filteredLines = lines.filter(line => !line.startsWith('a=ice-options:'));
+      
+      return filteredLines.join('\r\n');
+    }
+    
+    return sdp;
   }
 
   /**
