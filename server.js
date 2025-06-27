@@ -57,8 +57,17 @@ app.prepare().then(() => {
     
     // Railway health check endpoint
     if (parsedUrl.pathname === '/health') {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('OK');
+      res.writeHead(200, { 
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(JSON.stringify({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        port: port
+      }));
       return;
     }
     
@@ -180,6 +189,12 @@ app.prepare().then(() => {
     console.log('> 🚀 WebSocket signaling server initialized at /socket.io/');
     console.log(`> 📡 Socket.IO server ready for WebRTC signaling on all interfaces`);
     console.log(`> Railway deployment: Server bound to ${host}:${port}`);
+    console.log(`> ✅ Health check available at http://${host}:${port}/health`);
+    
+    // Signal Railway that the app is ready
+    if (process.env.NODE_ENV === 'production') {
+      console.log('🚀 RAILWAY READY - Application fully initialized');
+    }
   });
 
   // Handle Railway deployment signals
