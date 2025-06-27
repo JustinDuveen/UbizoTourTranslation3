@@ -3,16 +3,18 @@
  * 
  * Provides centralized, consistent ICE server configuration across all WebRTC connections
  * with enterprise-grade redundancy, health monitoring, and security policies.
+ * Integrated with Xirsys TURN servers for optimal NAT traversal.
  * 
  * @author Senior WebRTC Developer
  * @version 1.0.0
  */
 
+import { getBestXirsysICEServers, getStaticXirsysICEServers } from './xirsysConfig';
+
 export interface ICEServerConfig {
   urls: string | string[];
   username?: string;
   credential?: string;
-  credentialType?: 'password' | 'oauth';
 }
 
 export interface EnterpriseICEConfig {
@@ -182,8 +184,40 @@ class ICEServerHealthMonitor {
   getHealthyServers(): ICEServerConfig[] {
     const healthyServers: ICEServerConfig[] = [];
     
-    // In server environment, return default config without health checking
+    // In server environment, return Xirsys static config without health checking
     if (typeof RTCPeerConnection === 'undefined') {
+      console.log('[ENTERPRISE-ICE] Server environment: using static Xirsys configuration');
+      return getStaticXirsysICEServers() as ICEServerConfig[];
+    }
+
+    // CRITICAL FIX: Use Xirsys servers instead of default servers
+    try {
+      const xirsysServers = getStaticXirsysICEServers();
+      console.log(`[ENTERPRISE-ICE] Using Xirsys configuration with ${xirsysServers.length} servers`);
+      
+      // Convert to ICEServerConfig format and validate
+      xirsysServers.forEach(server => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        const hasCredentials = server.username && server.credential;
+        
+        // Log server details for debugging
+        if (hasCredentials) {
+          const turnUrls = urls.filter(url => url.startsWith('turn:') || url.startsWith('turns:'));
+          console.log(`[ENTERPRISE-ICE] ✅ TURN server configured with ${turnUrls.length} endpoints and credentials`);
+        }
+        
+        healthyServers.push({
+          urls: server.urls,
+          username: server.username,
+          credential: server.credential
+        });
+      });
+      
+      return healthyServers;
+      
+    } catch (error) {
+      console.error('[ENTERPRISE-ICE] Failed to load Xirsys configuration, using fallback:', error);
+      // Fallback to basic config only if Xirsys fails
       return [
         {
           urls: [
@@ -201,49 +235,44 @@ class ICEServerHealthMonitor {
         }
       ];
     }
-    
-    // Always include primary STUN servers if healthy
-    const primarySTUN = [
-      'stun:stun1.l.google.com:19302',
-      'stun:stun2.l.google.com:19302'
-    ];
 
-    const healthySTUN = primarySTUN.filter(url => {
-      const status = this.healthStatus.get(url);
-      return !status || (status.isHealthy && status.errorCount < this.MAX_ERROR_COUNT);
-    });
-
-    if (healthySTUN.length > 0) {
-      healthyServers.push({ urls: healthySTUN });
-    }
-
-    // Add backup STUN servers if primary ones are failing
-    if (healthySTUN.length === 0) {
-      const backupSTUN = [
-        'stun:global.stun.twilio.com:3478',
-        'stun:stun.cloudflare.com:3478'
-      ];
+    // Browser environment: Apply health filtering to Xirsys servers
+    const xirsysServers = getStaticXirsysICEServers();
+    xirsysServers.forEach(server => {
+      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
       
-      const healthyBackup = backupSTUN.filter(url => {
-        const status = this.healthStatus.get(url);
-        return !status || (status.isHealthy && status.errorCount < this.MAX_ERROR_COUNT);
-      });
-
-      if (healthyBackup.length > 0) {
-        healthyServers.push({ urls: healthyBackup });
+      // For STUN servers, check health status
+      const isSTUNServer = urls.some(url => url.startsWith('stun:'));
+      if (isSTUNServer) {
+        const healthyUrls = urls.filter(url => {
+          const status = this.healthStatus.get(url);
+          return !status || (status.isHealthy && status.errorCount < this.MAX_ERROR_COUNT);
+        });
+        
+        if (healthyUrls.length > 0) {
+          healthyServers.push({
+            urls: healthyUrls,
+            username: server.username,
+            credential: server.credential
+          });
+        }
+      } else {
+        // For TURN servers, always include (health check is less reliable)
+        const hasCredentials = server.username && server.credential;
+        if (hasCredentials) {
+          const turnUrls = urls.filter(url => url.startsWith('turn:') || url.startsWith('turns:'));
+          console.log(`[ENTERPRISE-ICE] ✅ Including TURN server with ${turnUrls.length} endpoints and credentials`);
+        }
+        
+        healthyServers.push({
+          urls: server.urls,
+          username: server.username,
+          credential: server.credential
+        });
       }
-    }
-
-    // Add TURN servers (these would be configured with actual credentials in production)
-    healthyServers.push({
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
     });
 
+    console.log(`[ENTERPRISE-ICE] Final configuration: ${healthyServers.length} server groups`);
     return healthyServers;
   }
 

@@ -11,6 +11,57 @@ interface CachedICEServers {
 }
 
 let cachedServers: CachedICEServers | null = null;
+let dynamicCachedServers: CachedICEServers | null = null;
+
+/**
+ * EXPERT FIX: Dynamic TURN server credentials with fresh authentication
+ * Fetches fresh credentials from Xirsys API for optimal connectivity
+ * @returns Promise<RTCIceServer[]> Fresh ICE server configuration
+ */
+export async function getDynamicXirsysICEServers(): Promise<RTCIceServer[]> {
+  console.log('[XIRSYS] Fetching dynamic TURN credentials...');
+  
+  // Check cache first
+  if (dynamicCachedServers && Date.now() < dynamicCachedServers.expiresAt) {
+    console.log('[XIRSYS] Using cached dynamic credentials');
+    return dynamicCachedServers.servers;
+  }
+
+  try {
+    const response = await fetch('/api/xirsys/credentials', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Credentials API failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.success || !data.iceServers) {
+      throw new Error('Invalid credentials response format');
+    }
+
+    console.log(`[XIRSYS] ✅ Fetched ${data.serverCount} fresh ICE servers (${data.turnServerCount} TURN servers)`);
+    
+    // Cache the fresh credentials
+    dynamicCachedServers = {
+      servers: data.iceServers,
+      timestamp: Date.now(),
+      expiresAt: Date.now() + (data.ttl || 3600000) // Use provided TTL or 1 hour
+    };
+
+    return data.iceServers;
+
+  } catch (error) {
+    console.error('[XIRSYS] Dynamic credential fetch failed:', error);
+    console.log('[XIRSYS] Falling back to static credentials');
+    return getStaticXirsysICEServers();
+  }
+}
 
 /**
  * EXPERT FIX: Static TURN server configuration for guaranteed consistency
@@ -43,6 +94,22 @@ export function getStaticXirsysICEServers(): RTCIceServer[] {
       ]
     }
   ];
+}
+
+/**
+ * EXPERT FIX: Smart ICE server selection with automatic fallback
+ * Uses dynamic credentials when available, falls back to static
+ * @returns Promise<RTCIceServer[]> Best available ICE server configuration
+ */
+export async function getBestXirsysICEServers(): Promise<RTCIceServer[]> {
+  // Check if dynamic mode is enabled
+  if (process.env.NEXT_PUBLIC_XIRSYS_USE_DYNAMIC === 'true') {
+    console.log('[XIRSYS] Dynamic mode enabled, fetching fresh credentials');
+    return await getDynamicXirsysICEServers();
+  }
+  
+  console.log('[XIRSYS] Static mode enabled, using cached credentials');
+  return getStaticXirsysICEServers();
 }
 
 /**
