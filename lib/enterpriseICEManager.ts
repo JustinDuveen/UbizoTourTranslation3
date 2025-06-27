@@ -42,16 +42,30 @@ class ICEServerHealthMonitor {
   private readonly MAX_ERROR_COUNT = 5; // More lenient threshold
 
   constructor() {
-    this.startHealthChecking();
+    // Only start health checking in browser environment
+    if (typeof window !== 'undefined' && typeof RTCPeerConnection !== 'undefined') {
+      this.startHealthChecking();
+    }
   }
 
   private startHealthChecking(): void {
+    // Extra safety check
+    if (typeof RTCPeerConnection === 'undefined') {
+      console.warn('RTCPeerConnection not available, skipping ICE health monitoring');
+      return;
+    }
+    
     this.checkInterval = setInterval(() => {
       this.performHealthChecks();
     }, this.CHECK_INTERVAL_MS);
   }
 
   private async performHealthChecks(): Promise<void> {
+    // Skip health checks in server environment
+    if (typeof RTCPeerConnection === 'undefined') {
+      return;
+    }
+    
     const stunServers = [
       'stun:stun1.l.google.com:19302',
       'stun:stun2.l.google.com:19302',
@@ -65,6 +79,11 @@ class ICEServerHealthMonitor {
   }
 
   private async checkSTUNServer(url: string): Promise<void> {
+    // Skip STUN checks in server environment
+    if (typeof RTCPeerConnection === 'undefined') {
+      return;
+    }
+    
     const startTime = Date.now();
 
     try {
@@ -163,6 +182,26 @@ class ICEServerHealthMonitor {
   getHealthyServers(): ICEServerConfig[] {
     const healthyServers: ICEServerConfig[] = [];
     
+    // In server environment, return default config without health checking
+    if (typeof RTCPeerConnection === 'undefined') {
+      return [
+        {
+          urls: [
+            'stun:stun1.l.google.com:19302',
+            'stun:stun2.l.google.com:19302'
+          ]
+        },
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443'
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ];
+    }
+    
     // Always include primary STUN servers if healthy
     const primarySTUN = [
       'stun:stun1.l.google.com:19302',
@@ -242,6 +281,11 @@ export class EnterpriseICEManager {
   }
 
   private async initializeCertificates(): Promise<void> {
+    // Skip certificate generation in server environment
+    if (typeof RTCPeerConnection === 'undefined' || typeof window === 'undefined') {
+      return;
+    }
+    
     try {
       // Generate enterprise-grade certificates for DTLS
       const certificate = await RTCPeerConnection.generateCertificate({

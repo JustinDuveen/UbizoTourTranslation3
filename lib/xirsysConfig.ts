@@ -20,6 +20,12 @@ let cachedServers: CachedICEServers | null = null;
 export function getStaticXirsysICEServers(): RTCIceServer[] {
   console.log('[XIRSYS] Using static TURN configuration for guaranteed consistency');
   
+  // TEMPORARY: Check if we should use fallback (for testing free plan limits)
+  if (process.env.NEXT_PUBLIC_USE_FALLBACK_SERVERS === 'true') {
+    console.log('[XIRSYS] 🔄 Using fallback servers due to environment variable');
+    return getFallbackICEServers();
+  }
+  
   return [
     {
       urls: ["stun:jb-turn1.xirsys.com"]
