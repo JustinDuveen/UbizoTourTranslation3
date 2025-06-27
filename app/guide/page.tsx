@@ -459,22 +459,24 @@ export default function GuidePage() {
                 className="cursor-pointer"
                 onClick={() => setIsLanguageAccordionOpen(!isLanguageAccordionOpen)}
               >
-                <CardTitle className="text-white flex items-center justify-between">
-                  <div className="flex items-center">
-                    <Globe className="h-5 w-5 mr-2 text-blue-400" />
-                    Language Setup
-                    {selectedLanguages.length > 0 && (
-                      <Badge variant="secondary" className="ml-2 bg-blue-500/20 text-blue-400 border-blue-500/30 text-xs">
-                        {selectedLanguages.length} selected
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-white/60 hover:text-white transition-colors">
-                    {isLanguageAccordionOpen ? (
-                      <ChevronUp className="h-5 w-5" />
-                    ) : (
-                      <ChevronDown className="h-5 w-5" />
-                    )}
+                <CardTitle className="text-white">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center min-w-0 flex-1">
+                      <Globe className="h-5 w-5 mr-2 text-blue-400 flex-shrink-0" />
+                      <span className="truncate">Language Setup</span>
+                      {selectedLanguages.length > 0 && (
+                        <Badge variant="secondary" className="ml-2 bg-blue-500/20 text-blue-400 border-blue-500/30 text-xs whitespace-nowrap flex-shrink-0">
+                          {selectedLanguages.length} selected
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-white/60 hover:text-white transition-colors ml-2 flex-shrink-0">
+                      {isLanguageAccordionOpen ? (
+                        <ChevronUp className="h-5 w-5" />
+                      ) : (
+                        <ChevronDown className="h-5 w-5" />
+                      )}
+                    </div>
                   </div>
                 </CardTitle>
                 <CardDescription className="text-white/70">

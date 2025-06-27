@@ -1299,10 +1299,139 @@ async function pollForAttendeeAnswers(
   }
 }
 
+// TypeScript interfaces for proper typing
+interface AttendeeAnswerData {
+  readonly attendeeId: string;
+  readonly answer: RTCSessionDescriptionInit | string;
+  readonly timestamp?: number;
+}
+
+interface ProcessedAnswerTracker {
+  readonly processedAttendees: ReadonlySet<string>;
+  addProcessedAttendee(attendeeId: string): void;
+  hasProcessedAttendee(attendeeId: string): boolean;
+  clear(): void;
+}
+
+// Implementation of processed answer tracker with encapsulation
+class ProcessedAnswerTrackerImpl implements ProcessedAnswerTracker {
+  private readonly _processedAttendees = new Set<string>();
+
+  get processedAttendees(): ReadonlySet<string> {
+    return this._processedAttendees;
+  }
+
+  addProcessedAttendee(attendeeId: string): void {
+    if (typeof attendeeId !== 'string' || attendeeId.trim() === '') {
+      throw new Error('AttendeeId must be a non-empty string');
+    }
+    this._processedAttendees.add(attendeeId);
+  }
+
+  hasProcessedAttendee(attendeeId: string): boolean {
+    return this._processedAttendees.has(attendeeId);
+  }
+
+  clear(): void {
+    this._processedAttendees.clear();
+  }
+}
+
+// Centralized answer deduplication manager with proper encapsulation
+class AnswerDeduplicationManager {
+  private readonly trackers = new Map<string, ProcessedAnswerTracker>();
+
+  private getOrCreateTracker(language: string): ProcessedAnswerTracker {
+    if (!this.trackers.has(language)) {
+      this.trackers.set(language, new ProcessedAnswerTrackerImpl());
+    }
+    const tracker = this.trackers.get(language);
+    if (!tracker) {
+      throw new Error(`Failed to create tracker for language: ${language}`);
+    }
+    return tracker;
+  }
+
+  isDuplicateAnswer(language: string, attendeeId: string): boolean {
+    try {
+      const tracker = this.getOrCreateTracker(language);
+      return tracker.hasProcessedAttendee(attendeeId);
+    } catch (error) {
+      console.error(`Error checking duplicate answer for ${language}:${attendeeId}:`, error);
+      return false; // Fail open to allow processing
+    }
+  }
+
+  markAnswerProcessed(language: string, attendeeId: string): void {
+    try {
+      const tracker = this.getOrCreateTracker(language);
+      tracker.addProcessedAttendee(attendeeId);
+    } catch (error) {
+      console.error(`Error marking answer as processed for ${language}:${attendeeId}:`, error);
+      // Continue execution - this is not critical enough to stop processing
+    }
+  }
+
+  cleanupLanguage(language: string): number {
+    const tracker = this.trackers.get(language);
+    if (!tracker) {
+      return 0;
+    }
+    const processedCount = tracker.processedAttendees.size;
+    tracker.clear();
+    this.trackers.delete(language);
+    return processedCount;
+  }
+
+  getProcessedCount(language: string): number {
+    const tracker = this.trackers.get(language);
+    return tracker ? tracker.processedAttendees.size : 0;
+  }
+}
+
+// Singleton instance with proper initialization
+const answerDeduplicationManager = new AnswerDeduplicationManager();
+
+// Type guard for validating answer data structure
+function isValidAttendeeAnswerData(data: unknown): data is AttendeeAnswerData {
+  if (!data || typeof data !== 'object') {
+    return false;
+  }
+  
+  const answerData = data as Record<string, unknown>;
+  
+  // Validate attendeeId
+  if (typeof answerData.attendeeId !== 'string' || answerData.attendeeId.trim() === '') {
+    return false;
+  }
+  
+  // Validate answer structure
+  if (!answerData.answer) {
+    return false;
+  }
+  
+  // Answer can be either a string (serialized) or RTCSessionDescriptionInit object
+  if (typeof answerData.answer === 'string') {
+    try {
+      const parsed = JSON.parse(answerData.answer);
+      return typeof parsed === 'object' && parsed !== null;
+    } catch {
+      return false;
+    }
+  }
+  
+  if (typeof answerData.answer === 'object' && answerData.answer !== null) {
+    const answer = answerData.answer as Record<string, unknown>;
+    return typeof answer.type === 'string' && typeof answer.sdp === 'string';
+  }
+  
+  return false;
+}
+
 async function processAttendeeAnswer(
   language: string,
   tourId: string,
-  answerData: any,
+  answerData: unknown,
   retryCount: number = 0
 ): Promise<void> {
   const langContext = `[${language}]`;
@@ -1319,8 +1448,25 @@ async function processAttendeeAnswer(
   }
 
   try {
-    // Extract attendee ID and answer SDP
-    const attendeeId = answerData.attendeeId || `anonymous-${Date.now()}`;
+    // CRITICAL FIX: Type-safe validation and deduplication
+    if (!isValidAttendeeAnswerData(answerData)) {
+      console.error(`${langContext} ❌ Invalid answer data structure received:`, answerData);
+      return;
+    }
+
+    // Now we have type-safe access to attendeeId
+    const { attendeeId } = answerData;
+    
+    // CRITICAL FIX: Prevent duplicate answer processing from WebSocket + HTTP polling
+    if (answerDeduplicationManager.isDuplicateAnswer(language, attendeeId)) {
+      console.log(`${langContext} ⚠️ DUPLICATE ANSWER BLOCKED: Already processed answer from attendee ${attendeeId}`);
+      console.log(`${langContext} 📊 Total processed answers for ${language}: ${answerDeduplicationManager.getProcessedCount(language)}`);
+      return;
+    }
+    
+    // Mark this answer as processed before processing to prevent race conditions
+    answerDeduplicationManager.markAnswerProcessed(language, attendeeId);
+    console.log(`${langContext} ✅ First-time answer processing for attendee ${attendeeId}`);
 
     // Parse the answer if it's a string (from Redis)
     let parsedAnswer;
@@ -2315,4 +2461,44 @@ async function verifyOpenAIAudio(
   });
 
   return { isValid: hasValidTrack, details };
+}
+
+/**
+ * CRITICAL FIX: Clean up processed answers tracking when language session ends
+ * TypeScript-safe cleanup with proper error handling
+ */
+export function cleanupLanguageSession(language: string): void {
+  const langContext = `[${language}]`;
+  
+  if (typeof language !== 'string' || language.trim() === '') {
+    console.error('❌ Invalid language provided for cleanup:', language);
+    return;
+  }
+  
+  console.log(`${langContext} 🧹 Cleaning up language session...`);
+  
+  try {
+    // Clear processed answers tracking to prevent memory leaks
+    const clearedCount = answerDeduplicationManager.cleanupLanguage(language);
+    console.log(`${langContext} 🧹 Cleared ${clearedCount} processed answer tracking entries`);
+    
+    // Additional cleanup can be added here as needed
+    console.log(`${langContext} ✅ Language session cleanup completed successfully`);
+  } catch (error) {
+    console.error(`${langContext} ❌ Error during language session cleanup:`, error);
+    // Don't throw - cleanup should be resilient
+  }
+}
+
+/**
+ * Get current deduplication statistics for debugging
+ */
+export function getDeduplicationStats(language: string): { processedCount: number } {
+  if (typeof language !== 'string' || language.trim() === '') {
+    return { processedCount: 0 };
+  }
+  
+  return {
+    processedCount: answerDeduplicationManager.getProcessedCount(language)
+  };
 }

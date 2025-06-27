@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: 'Ubizo Tour Translation App',
   description: 'Created by VirtualAIWorkforce.com',
   generator: 'Created by VirtualAIWorkforce.com',
+  icons: {
+    icon: '/ubizo_favicon.jpg',
+    apple: '/ubizo_favicon.jpg'
+  }
 }
 
 export default function RootLayout({
